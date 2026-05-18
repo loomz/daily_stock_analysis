@@ -237,6 +237,11 @@ class DataSourceUnavailableError(DataFetchError):
     pass
 
 
+class ChipDistributionError(DataFetchError):
+    """筹码分布数据获取失败异常"""
+    pass
+
+
 class BaseFetcher(ABC):
     """
     数据源抽象基类
@@ -991,9 +996,10 @@ class DataFetcherManager:
         优先级动态调整逻辑：
         - 如果配置了 TUSHARE_TOKEN：实例化 TushareFetcher，并按其内部逻辑提升优先级
         - 如果配置了 Longbridge 凭据：实例化 LongbridgeFetcher 作为美股/港股兜底
+        - EastmoneyChipFetcher：筹码分布专用通道，Priority 0
         - 未配置的可选数据源不实例化，避免在批量拉取时反复探测无效源
         - 默认优先级：
-          0. EfinanceFetcher (Priority 0) - 最高优先级
+          0. EfinanceFetcher / EastmoneyChipFetcher (Priority 0)
           1. AkshareFetcher (Priority 1)
           2. PytdxFetcher (Priority 2) - 通达信
           3. BaostockFetcher (Priority 3)
@@ -1007,10 +1013,12 @@ class DataFetcherManager:
         from .baostock_fetcher import BaostockFetcher
         from .yfinance_fetcher import YfinanceFetcher
         from .longbridge_fetcher import LongbridgeFetcher
+        from .eastmoney_fetcher import EastmoneyChipFetcher
         config = get_config()
         # 创建所有数据源实例（优先级在各 Fetcher 的 __init__ 中确定）
         efinance = EfinanceFetcher()
         akshare = AkshareFetcher()
+        eastmoney_chip = EastmoneyChipFetcher()  # 东财筹码分布专用通道（Priority 0）
         pytdx = PytdxFetcher()      # 通达信数据源（可配 PYTDX_HOST/PYTDX_PORT）
         baostock = BaostockFetcher()
         yfinance = YfinanceFetcher()
@@ -1038,6 +1046,7 @@ class DataFetcherManager:
             self._fetchers = [
                 efinance,
                 akshare,
+                eastmoney_chip,
                 pytdx,
                 baostock,
                 yfinance,
@@ -1590,7 +1599,7 @@ class DataFetcherManager:
                 continue
 
         logger.warning(f"[筹码分布] {stock_code} 所有数据源均失败")
-        return None
+        raise ChipDistributionError(f"[筹码分布] {stock_code} 所有数据源均失败")
 
     def get_stock_name(self, stock_code: str, allow_realtime: bool = True) -> Optional[str]:
         """

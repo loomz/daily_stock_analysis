@@ -25,7 +25,7 @@ import pandas as pd
 from src.config import FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT, get_config, Config
 from src.storage import get_db
 from data_provider import DataFetcherManager
-from data_provider.base import normalize_stock_code
+from data_provider.base import normalize_stock_code, ChipDistributionError
 from data_provider.realtime_types import ChipDistribution
 from src.analyzer import (
     GeminiAnalyzer,
@@ -302,6 +302,20 @@ class StockAnalysisPipeline:
                               f"90%集中度={chip_data.concentration_90:.2%}")
                 else:
                     logger.debug(f"{stock_name}({code}) 筹码分布获取失败或已禁用")
+            # except ChipDistributionError as e:
+            #     # 筹码功能已启用但所有数据源均失败，终止该股票分析
+            #     logger.error(f"{stock_name}({code}) 筹码数据获取失败，终止分析: {e}")
+            #     result = AnalysisResult(
+            #         code=code,
+            #         name=stock_name,
+            #         sentiment_score=0,
+            #         trend_prediction="Unknown",
+            #         operation_advice="",
+            #         confidence_level="低",
+            #         success=False,
+            #         error_message=f"筹码数据获取失败: {e}"
+            #     )
+            #     return result
             except Exception as e:
                 logger.warning(f"{stock_name}({code}) 获取筹码分布失败: {e}")
 
