@@ -1499,28 +1499,17 @@ class AkshareFetcher(BaseFetcher):
             latest = df.iloc[-1]
             
             # 使用 realtime_types.py 中的统一转换函数
-            _pr = safe_float(latest.get('获利比例'))
-            _c90 = safe_float(latest.get('90集中度'))
-            _c70 = safe_float(latest.get('70集中度'))
-            # 获利比例和集中度返回的是百分比，需转为 0-1 比率
-            if _pr is not None and _pr > 1:
-                _pr = _pr / 100.0
-            if _c90 is not None and _c90 > 1:
-                _c90 = _c90 / 100.0
-            if _c70 is not None and _c70 > 1:
-                _c70 = _c70 / 100.0
             chip = ChipDistribution(
                 code=stock_code,
                 date=str(latest.get('日期', '')),
-                source="akshare",
-                profit_ratio=_pr or 0.0,
-                avg_cost=safe_float(latest.get('平均成本')) or 0.0,
-                cost_90_low=safe_float(latest.get('90成本-低')) or 0.0,
-                cost_90_high=safe_float(latest.get('90成本-高')) or 0.0,
-                concentration_90=_c90 or 0.0,
-                cost_70_low=safe_float(latest.get('70成本-低')) or 0.0,
-                cost_70_high=safe_float(latest.get('70成本-高')) or 0.0,
-                concentration_70=_c70 or 0.0,
+                profit_ratio=safe_float(latest.get('获利比例')),
+                avg_cost=safe_float(latest.get('平均成本')),
+                cost_90_low=safe_float(latest.get('90成本-低')),
+                cost_90_high=safe_float(latest.get('90成本-高')),
+                concentration_90=safe_float(latest.get('90集中度')),
+                cost_70_low=safe_float(latest.get('70成本-低')),
+                cost_70_high=safe_float(latest.get('70成本-高')),
+                concentration_70=safe_float(latest.get('70集中度')),
             )
             
             logger.info(f"[筹码分布] {stock_code} 日期={chip.date}: 获利比例={chip.profit_ratio:.1%}, "

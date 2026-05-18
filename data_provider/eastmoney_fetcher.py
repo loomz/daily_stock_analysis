@@ -315,11 +315,10 @@ class EastmoneyChipFetcher(BaseFetcher):
         if m:
             values['date'] = m.group(1)
 
-        # 获利比例
+        # 获利比例 - 保持原始百分比，与 akshare 对齐
         m = re.search(r'获利比例[：:]\s*([\d.]+)%?', text)
         if m:
-            pr = safe_float(m.group(1))
-            values['profit_ratio'] = (pr / 100.0) if (pr and pr > 1) else pr
+            values['profit_ratio'] = safe_float(m.group(1))
 
         # 平均成本
         m = re.search(r'平均成本[：:]\s*([\d.]+)', text)
@@ -340,10 +339,10 @@ class EastmoneyChipFetcher(BaseFetcher):
             if m:
                 values['cost_90_high'] = safe_float(m.group(1))
 
-        # 90%集中度 - 必须匹配 "集中度" 字样，避免误命中成本行
+        # 90%集中度 - 保持原始百分比，与 akshare 对齐
         m = re.search(r'90％?集中度[：:]\s*([\d.]+)%?', text)
         if m:
-            values['concentration_90'] = self._to_ratio(safe_float(m.group(1)))
+            values['concentration_90'] = safe_float(m.group(1))
 
         # 70%成本区间
         m = re.search(r'70%成本[－\-]?[:：]\s*([\d.]+)[－\-~]([\d.]+)', text)
@@ -358,10 +357,10 @@ class EastmoneyChipFetcher(BaseFetcher):
             if m:
                 values['cost_70_high'] = safe_float(m.group(1))
 
-        # 70%集中度
+        # 70%集中度 - 保持原始百分比，与 akshare 对齐
         m = re.search(r'70％?集中度[：:]\s*([\d.]+)%?', text)
         if m:
-            values['concentration_70'] = self._to_ratio(safe_float(m.group(1)))
+            values['concentration_70'] = safe_float(m.group(1))
 
         if not values.get('profit_ratio') and not values.get('avg_cost'):
             logger.debug(f"[{self.name}] 筹码区域无有效数据")
