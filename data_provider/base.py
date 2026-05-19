@@ -553,6 +553,7 @@ class DataFetcherManager:
         self._tickflow_fetcher = None
         self._tickflow_api_key: Optional[str] = None
         self._tickflow_lock = RLock()
+        self._eastmoney_chip_fetcher: Optional[BaseFetcher] = None
         self._fundamental_cache: Dict[str, Dict[str, Any]] = {}
         self._fundamental_cache_lock = RLock()
         self._fundamental_timeout_worker_limit = 8
@@ -750,6 +751,18 @@ class DataFetcherManager:
                 self._tickflow_api_key = None
                 return None
 
+    def _get_eastmoney_chip_fetcher(self):
+        """Lazily create an EastmoneyChipFetcher for chip distribution fallback."""
+        if not hasattr(self, "_eastmoney_chip_fetcher"):
+            self._eastmoney_chip_fetcher = None
+        if self._eastmoney_chip_fetcher is None:
+            try:
+                from .eastmoney_fetcher import EastmoneyChipFetcher
+                self._eastmoney_chip_fetcher = EastmoneyChipFetcher()
+            except Exception as exc:
+                logger.warning("[EastmoneyChipFetcher] 初始化失败: %s", exc)
+        return self._eastmoney_chip_fetcher
+
     def close(self) -> None:
         """Best-effort release of manager-owned resources."""
         if not hasattr(self, "_tickflow_lock") or self._tickflow_lock is None:
@@ -765,6 +778,14 @@ class DataFetcherManager:
                 current_fetcher.close()
             except Exception as exc:
                 logger.debug("[TickFlowFetcher] 关闭管理器资源失败: %s", exc)
+
+        eastmoney_chip = getattr(self, "_eastmoney_chip_fetcher", None)
+        if eastmoney_chip is not None and hasattr(eastmoney_chip, "_close_driver"):
+            try:
+                eastmoney_chip._close_driver()
+            except Exception as exc:
+                logger.debug("[EastmoneyChipFetcher] 关闭驱动器失败: %s", exc)
+        self._eastmoney_chip_fetcher = None
 
     def __del__(self) -> None:
         try:
@@ -1559,11 +1580,11 @@ class DataFetcherManager:
         """
         获取筹码分布数据（带熔断和多数据源降级）
 
-        策略：
+        降级策略：
         1. 检查配置开关
-        2. 检查熔断器状态
-        3. 依次尝试多个数据源：数据源优先级与获取daily的数据优先级一致
-        4. 所有数据源失败则返回 None（降级兜底）
+        2. 首选：EastmoneyChipFetcher（Selenium 爬取东方财富筹码数据）
+        3. 兜底：已注册数据源中的筹码接口（AkshareFetcher -> TushareFetcher）
+        4. 所有数据源失败则返回 None
 
         Args:
             stock_code: 股票代码
@@ -1571,7 +1592,6 @@ class DataFetcherManager:
         Returns:
             ChipDistribution 对象，失败则返回 None
         """
-        # Normalize code (strip SH/SZ prefix etc.)
         stock_code = normalize_stock_code(stock_code)
 
         from .realtime_types import get_chip_circuit_breaker
@@ -1579,24 +1599,37 @@ class DataFetcherManager:
 
         config = get_config()
 
-        # 如果筹码分布功能被禁用，直接返回 None
         if not config.enable_chip_distribution:
             logger.debug(f"[筹码分布] 功能已禁用，跳过 {stock_code}")
             return None
 
         circuit_breaker = get_chip_circuit_breaker()
 
-        # 直接遍历管理器已经按 priority 排好序的数据源列表
+        # 首选：EastmoneyChipFetcher（Selenium 直接爬取东方财富）
+        eastmoney_chip = self._get_eastmoney_chip_fetcher()
+        if eastmoney_chip is not None:
+            em_key = "eastmoney_chip"
+            if circuit_breaker.is_available(em_key):
+                try:
+                    chip = self._call_fetcher_method(eastmoney_chip, 'get_chip_distribution', stock_code)
+                    if chip is not None:
+                        circuit_breaker.record_success(em_key)
+                        logger.info(f"[筹码分布] {stock_code} 成功获取 (来源: EastmoneyChipFetcher)")
+                        return chip
+                    else:
+                        circuit_breaker.record_inconclusive(em_key)
+                except Exception as e:
+                    logger.warning(f"[筹码分布] EastmoneyChipFetcher 获取 {stock_code} 失败: {e}")
+                    circuit_breaker.record_failure(em_key, str(e))
+
+        # 兜底：已注册数据源中实现筹码接口的数据源（AkshareFetcher / TushareFetcher）
         for fetcher in self._get_fetchers_snapshot():
-            # 只处理实现了筹码分布逻辑的数据源
             if not hasattr(fetcher, 'get_chip_distribution'):
                 continue
-            
+
             fetcher_name = fetcher.name
-            # 动态生成熔断器的 key，例如 "TushareFetcher" -> "tushare_chip"
             source_key = f"{fetcher_name.replace('Fetcher', '').lower()}_chip"
 
-            # 检查熔断器状态
             if not circuit_breaker.is_available(source_key):
                 logger.debug(f"[熔断] {fetcher_name} 筹码接口处于熔断状态，尝试下一个")
                 continue
@@ -1608,7 +1641,6 @@ class DataFetcherManager:
                     logger.info(f"[筹码分布] {stock_code} 成功获取 (来源: {fetcher_name})")
                     return chip
                 else:
-                    # 空结果：释放 HALF_OPEN 探测名额，避免卡死
                     circuit_breaker.record_inconclusive(source_key)
             except Exception as e:
                 logger.warning(f"[筹码分布] {fetcher_name} 获取 {stock_code} 失败: {e}")

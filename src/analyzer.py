@@ -240,7 +240,10 @@ def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) 
 
 # ---------- chip_structure fallback (Issue #589) ----------
 
-_CHIP_KEYS: tuple = ("profit_ratio", "avg_cost", "concentration", "chip_health")
+_CHIP_KEYS: tuple = (
+    "profit_ratio", "avg_cost", "concentration", "chip_health",
+    "cost_90_low", "cost_90_high", "cost_70_low", "cost_70_high", "concentration_70",
+)
 
 
 def _is_value_placeholder(v: Any) -> bool:
@@ -586,18 +589,38 @@ def _build_chip_structure_from_data(chip_data: Any, language: str = "zh") -> Dic
         pr = _safe_float(chip_data.profit_ratio)
         ac = chip_data.avg_cost
         c90 = _safe_float(chip_data.concentration_90)
+        c70 = _safe_float(getattr(chip_data, "concentration_70", 0))
+        cost_90_low = _safe_float(getattr(chip_data, "cost_90_low", 0))
+        cost_90_high = _safe_float(getattr(chip_data, "cost_90_high", 0))
+        cost_70_low = _safe_float(getattr(chip_data, "cost_70_low", 0))
+        cost_70_high = _safe_float(getattr(chip_data, "cost_70_high", 0))
     else:
         d = chip_data if isinstance(chip_data, dict) else {}
         pr = _safe_float(d.get("profit_ratio"))
         ac = d.get("avg_cost")
         c90 = _safe_float(d.get("concentration_90"))
+        c70 = _safe_float(d.get("concentration_70", 0))
+        cost_90_low = _safe_float(d.get("cost_90_low", 0))
+        cost_90_high = _safe_float(d.get("cost_90_high", 0))
+        cost_70_low = _safe_float(d.get("cost_70_low", 0))
+        cost_70_high = _safe_float(d.get("cost_70_high", 0))
     chip_health = _derive_chip_health(pr, c90, language=language)
-    return {
+    result = {
         "profit_ratio": f"{pr:.1%}",
         "avg_cost": ac if (ac is not None and _safe_float(ac) != 0.0) else "N/A",
         "concentration": f"{c90:.2%}",
         "chip_health": chip_health,
     }
+    # 附加详细筹码区间（有数据时才写入）
+    if cost_90_low != 0.0 and cost_90_high != 0.0:
+        result["cost_90_low"] = f"{cost_90_low:.2f}"
+        result["cost_90_high"] = f"{cost_90_high:.2f}"
+    if c70 != 0.0:
+        result["concentration_70"] = f"{c70:.2%}"
+    if cost_70_low != 0.0 and cost_70_high != 0.0:
+        result["cost_70_low"] = f"{cost_70_low:.2f}"
+        result["cost_70_high"] = f"{cost_70_high:.2f}"
+    return result
 
 
 def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> None:
@@ -618,12 +641,18 @@ def fill_chip_structure_if_needed(result: "AnalysisResult", chip_data: Any) -> N
         )
         # Start from a copy of cs to preserve any extra keys the LLM may have added
         merged = dict(cs)
-        for k in _CHIP_KEYS:
-            if _is_value_placeholder(merged.get(k)):
+        # Always override display keys with formatted values from data source
+        # (LLM may return raw numbers like 65.2 without %, or placeholder text)
+        for k in ("profit_ratio", "avg_cost", "concentration", "chip_health"):
+            if k in filled:
+                merged[k] = filled[k]
+        # Merge detail keys from data source
+        for k in ("cost_90_low", "cost_90_high", "cost_70_low", "cost_70_high", "concentration_70"):
+            if k in filled:
                 merged[k] = filled[k]
         if merged != cs:
             dp["chip_structure"] = merged
-            logger.info("[chip_structure] Filled placeholder chip fields from data source (Issue #589)")
+            logger.info("[chip_structure] Filled chip fields from data source (Issue #589)")
     except Exception as e:
         logger.warning("[chip_structure] Fill failed, skipping: %s", e)
 

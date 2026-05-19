@@ -27,6 +27,9 @@
 6. YfinanceFetcher (Priority 4) - 来自 yfinance 库
 7. LongbridgeFetcher (Priority 5) - 长桥 OpenAPI（美股/港股兜底）
 
+筹码分布专用优先：
+- EastmoneyChipFetcher (Priority 0) - Selenium 爬取东方财富筹码数据
+
 提示：优先级数字越小越优先，同优先级按初始化顺序排列
 """
 
@@ -40,6 +43,7 @@ from .yfinance_fetcher import YfinanceFetcher
 from .longbridge_fetcher import LongbridgeFetcher
 from .finnhub_fetcher import FinnhubFetcher
 from .alphavantage_fetcher import AlphaVantageFetcher
+from .eastmoney_fetcher import EastmoneyChipFetcher
 from .us_index_mapping import is_us_index_code, is_us_stock_code, get_us_index_yf_symbol, US_INDEX_MAPPING
 
 __all__ = [
@@ -54,6 +58,7 @@ __all__ = [
     'LongbridgeFetcher',
     'FinnhubFetcher',
     'AlphaVantageFetcher',
+    'EastmoneyChipFetcher',
     'is_us_index_code',
     'is_us_stock_code',
     'is_hk_stock_code',
