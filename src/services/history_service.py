@@ -21,6 +21,8 @@ from src.report_language import (
     get_localized_stock_name,
     get_report_labels,
     get_signal_level,
+    get_chip_unavailable_reason,
+    is_chip_structure_unavailable,
     localize_bias_status,
     localize_chip_health,
     localize_operation_advice,
@@ -758,40 +760,10 @@ class HistoryService:
                 else:
                     chip_emoji = "🚨"
                 report_lines.extend([
-                    f"### 筹码分布 {chip_emoji}{chip_health}",
+                    f"**{labels['chip_label']}**: {chip_data.get('profit_ratio', 'N/A')} | {chip_data.get('avg_cost', 'N/A')} | "
+                    f"{chip_data.get('concentration', 'N/A')} {chip_emoji}{chip_health}",
                     "",
-                    f"| {labels['chip_metrics_label']} | {labels['chip_value_label']} |",
-                    "|---------|------|",
                 ])
-                report_lines.append(
-                    f"| {labels['profit_ratio_label']} | {chip_data.get('profit_ratio', 'N/A')} |"
-                )
-                report_lines.append(
-                    f"| {labels['avg_cost_label']} | {chip_data.get('avg_cost', 'N/A')} 元 |"
-                )
-                c90l = chip_data.get('cost_90_low')
-                c90h = chip_data.get('cost_90_high')
-                if c90l and c90h:
-                    report_lines.append(
-                        f"| {labels['cost_90_range_label']} | {c90l} ~ {c90h} 元 |"
-                    )
-                c90 = chip_data.get('concentration')
-                if c90:
-                    report_lines.append(
-                        f"| {labels['concentration_90_label']} | {c90} |"
-                    )
-                c70l = chip_data.get('cost_70_low')
-                c70h = chip_data.get('cost_70_high')
-                if c70l and c70h:
-                    report_lines.append(
-                        f"| {labels['cost_70_range_label']} | {c70l} ~ {c70h} 元 |"
-                    )
-                c70 = chip_data.get('concentration_70')
-                if c70:
-                    report_lines.append(
-                        f"| {labels['concentration_70_label']} | {c70} |"
-                    )
-                report_lines.append("")
 
         # ========== 作战计划 ==========
         battle = dashboard.get('battle_plan', {}) if dashboard else {}
