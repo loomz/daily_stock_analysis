@@ -73,6 +73,7 @@ const MobileHomePage: React.FC = () => {
     hasMore,
     selectedReport,
     isLoadingReport,
+    activeTasks,
     markdownDrawerOpen,
     setQuery,
     clearError,
@@ -580,6 +581,61 @@ const MobileHomePage: React.FC = () => {
               ) : '分析'}
             </button>
           </div>
+
+          {/* Active tasks */}
+          {activeTasks && activeTasks.length > 0 ? (() => {
+            const active = activeTasks.filter((t) => t.status === 'pending' || t.status === 'processing');
+            const processing = active.filter((t) => t.status === 'processing');
+            const pending = active.filter((t) => t.status === 'pending');
+            return (
+              <div className="mt-2 rounded-xl border border-subtle bg-surface overflow-hidden">
+                <div className="flex items-center justify-between border-b border-subtle px-3 py-2">
+                  <div className="flex items-center gap-2 text-xs text-secondary-text">
+                    <svg className="h-3.5 w-3.5 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span>分析任务</span>
+                    {processing.length > 0 && (
+                      <span className="flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-cyan animate-pulse" />
+                        {processing.length} 进行中
+                      </span>
+                    )}
+                    {pending.length > 0 && (
+                      <span className="flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-muted-text" />
+                        {pending.length} 等待中
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="max-h-48 overflow-y-auto divide-y divide-subtle">
+                  {active.map((task) => {
+                    const isProcessing = task.status === 'processing';
+                    const progress = Math.max(0, Math.min(100, task.progress || 0));
+                    return (
+                      <div key={task.taskId} className="flex items-center gap-3 px-3 py-2.5">
+                        <span className={`shrink-0 h-2 w-2 rounded-full ${isProcessing ? 'bg-cyan animate-pulse' : 'bg-muted-text'}`} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-foreground truncate">{task.stockName || task.stockCode}</span>
+                            <span className="text-xs text-muted-text">{task.stockCode}</span>
+                          </div>
+                          {task.message && (
+                            <p className="truncate text-xs text-secondary-text mt-0.5">{task.message}</p>
+                          )}
+                          <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-white/8">
+                            <div className="h-full rounded-full bg-cyan transition-[width] duration-300 ease-out" style={{ width: `${progress}%` }} />
+                          </div>
+                        </div>
+                        <span className="shrink-0 text-[11px] text-muted-text tabular-nums">{progress}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })() : null}
         </div>
 
         {/* Error / alerts */}
