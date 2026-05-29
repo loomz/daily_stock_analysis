@@ -81,6 +81,22 @@ def _is_chrome_installed() -> bool:
     return False
 
 
+def _find_chrome_binary() -> Optional[str]:
+    """Find the Chrome/Chromium binary path. Selenium Manager needs this to pick the matching driver."""
+    for name in ("google-chrome", "google-chrome-stable", "google-chrome-beta",
+                 "google-chrome-unstable", "chromium-browser", "chromium"):
+        path = shutil.which(name)
+        if path:
+            return path
+    # Try common system paths as fallback
+    for p in ("/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+              "/usr/bin/chromium-browser", "/usr/bin/chromium",
+              "/usr/local/bin/google-chrome", "/usr/local/bin/chromium-browser"):
+        if os.path.exists(p):
+            return p
+    return None
+
+
 def _find_chromedriver_path() -> Optional[str]:
     """Find chromedriver binary from common locations."""
     # 1. Check PATH
@@ -180,7 +196,12 @@ class EastmoneyChipFetcher(BaseFetcher):
             options.add_argument(f'--user-agent={user_agent}')
             options.add_argument('--lang=zh-CN,zh;q=0.9')
 
-            # 使用已有的 chromedriver（避免 undetected-chromedriver 的下载延迟）
+            # Let Selenium Manager locate the Chrome binary and download matching driver
+            chrome_path = _find_chrome_binary()
+            if chrome_path:
+                options.binary_location = chrome_path
+                logger.debug("[EastmoneyChipFetcher] Chrome binary: %s", chrome_path)
+
             cd_path = _find_chromedriver_path()
             if cd_path:
                 service = Service(executable_path=cd_path)
