@@ -38,14 +38,14 @@ describe('device utils', () => {
   });
 
   describe('isMobileDevice', () => {
-    const originalNavigator = global.navigator;
+    const originalNavigator = globalThis.navigator;
 
     beforeEach(() => {
       vi.clearAllMocks();
     });
 
     afterEach(() => {
-      Object.defineProperty(global, 'navigator', {
+      Object.defineProperty(globalThis, 'navigator', {
         value: originalNavigator,
         writable: true,
         configurable: true,
@@ -53,7 +53,7 @@ describe('device utils', () => {
     });
 
     it('returns false when navigator is undefined', () => {
-      Object.defineProperty(global, 'navigator', {
+      Object.defineProperty(globalThis, 'navigator', {
         value: undefined,
         writable: true,
         configurable: true,
@@ -62,7 +62,7 @@ describe('device utils', () => {
     });
 
     it('returns true for Android UA', () => {
-      Object.defineProperty(global, 'navigator', {
+      Object.defineProperty(globalThis, 'navigator', {
         value: { userAgent: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36' },
         writable: true,
         configurable: true,
@@ -71,7 +71,7 @@ describe('device utils', () => {
     });
 
     it('returns true for iPhone UA', () => {
-      Object.defineProperty(global, 'navigator', {
+      Object.defineProperty(globalThis, 'navigator', {
         value: { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)' },
         writable: true,
         configurable: true,
@@ -80,7 +80,7 @@ describe('device utils', () => {
     });
 
     it('returns true for iPad UA', () => {
-      Object.defineProperty(global, 'navigator', {
+      Object.defineProperty(globalThis, 'navigator', {
         value: { userAgent: 'Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X)' },
         writable: true,
         configurable: true,
@@ -89,7 +89,7 @@ describe('device utils', () => {
     });
 
     it('returns false for desktop UA', () => {
-      Object.defineProperty(global, 'navigator', {
+      Object.defineProperty(globalThis, 'navigator', {
         value: {
           userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
           maxTouchPoints: 0,
@@ -101,7 +101,7 @@ describe('device utils', () => {
     });
 
     it('returns true for touch device with small screen', () => {
-      Object.defineProperty(global, 'navigator', {
+      Object.defineProperty(globalThis, 'navigator', {
         value: {
           userAgent: 'Mozilla/5.0 (Unknown)',
           maxTouchPoints: 5,
@@ -109,7 +109,7 @@ describe('device utils', () => {
         writable: true,
         configurable: true,
       });
-      Object.defineProperty(global, 'window', {
+      Object.defineProperty(globalThis, 'window', {
         value: { screen: { width: 375 } },
         writable: true,
         configurable: true,
@@ -118,7 +118,7 @@ describe('device utils', () => {
     });
 
     it('returns false for touch device with large screen', () => {
-      Object.defineProperty(global, 'navigator', {
+      Object.defineProperty(globalThis, 'navigator', {
         value: {
           userAgent: 'Mozilla/5.0 (Unknown)',
           maxTouchPoints: 5,
@@ -126,7 +126,7 @@ describe('device utils', () => {
         writable: true,
         configurable: true,
       });
-      Object.defineProperty(global, 'window', {
+      Object.defineProperty(globalThis, 'window', {
         value: { screen: { width: 1920 } },
         writable: true,
         configurable: true,
