@@ -26,6 +26,7 @@ vi.mock('../../api/history', () => ({
     deleteRecords: vi.fn(),
     getNews: vi.fn().mockResolvedValue({ total: 0, items: [] }),
     getMarkdown: vi.fn().mockResolvedValue('# report'),
+    getDiagnostics: vi.fn(),
   },
 }));
 
@@ -37,6 +38,7 @@ vi.mock('../../api/analysis', async () => {
       analyzeAsync: vi.fn(),
       triggerMarketReview: vi.fn(),
       getStatus: vi.fn(),
+      getTasks: vi.fn(),
     },
   };
 });
@@ -117,7 +119,20 @@ describe('HomePage', () => {
     vi.clearAllMocks();
     navigateMock.mockReset();
     useStockPoolStore.getState().resetDashboardState();
+    vi.mocked(analysisApi.getTasks).mockResolvedValue({
+      total: 0,
+      pending: 0,
+      processing: 0,
+      tasks: [],
+    });
     vi.mocked(agentApi.getSkills).mockResolvedValue({ skills: [], default_skill_id: '' });
+    vi.mocked(historyApi.getDiagnostics).mockResolvedValue({
+      status: 'unknown',
+      statusLabel: '未知',
+      reason: '旧报告或诊断证据不足，无法判断本次运行状态',
+      components: {},
+      copyText: 'data_status: unknown',
+    });
     vi.mocked(systemConfigApi.getSetupStatus).mockResolvedValue({
       isComplete: true,
       readyForSmoke: true,
@@ -160,6 +175,36 @@ describe('HomePage', () => {
         name: getReportText(normalizeReportLanguage(historyReport.meta.reportLanguage)).fullReport,
       }),
     ).toBeInTheDocument();
+    expect(historyApi.getMarkdown).not.toHaveBeenCalled();
+  });
+
+  it('loads markdown only after opening the full report drawer', async () => {
+    vi.mocked(historyApi.getList).mockResolvedValue({
+      total: 1,
+      page: 1,
+      limit: 20,
+      items: [historyItem],
+    });
+    vi.mocked(historyApi.getDetail).mockResolvedValue(historyReport);
+    vi.mocked(historyApi.getMarkdown).mockResolvedValue('# Full Markdown Report');
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const fullReportButton = await screen.findByRole('button', {
+      name: getReportText(normalizeReportLanguage(historyReport.meta.reportLanguage)).fullReport,
+    });
+    expect(historyApi.getMarkdown).not.toHaveBeenCalled();
+
+    fireEvent.click(fullReportButton);
+
+    await waitFor(() => {
+      expect(historyApi.getMarkdown).toHaveBeenCalledWith(historyReport.meta.id);
+    });
+    expect(await screen.findByRole('heading', { name: 'Full Markdown Report' })).toBeInTheDocument();
   });
 
   it('shows the empty report workspace when history is empty', async () => {
@@ -456,27 +501,91 @@ describe('HomePage', () => {
     });
   });
 
+  it('keeps same-stock history range controls in empty result state and allows switching back', async () => {
+    const staleReport = {
+      ...historyReport,
+      meta: {
+        ...historyReport.meta,
+        createdAt: '2020-01-01T08:00:00Z',
+      },
+    };
+
+    vi.mocked(historyApi.getList).mockImplementation((params: { stockCode?: string; startDate?: string } = {}) => {
+      if (!Object.prototype.hasOwnProperty.call(params, 'stockCode')) {
+        return Promise.resolve({
+          total: 1,
+          page: 1,
+          limit: 20,
+          items: [historyItem],
+        });
+      }
+
+      return Promise.resolve({
+        total: 0,
+        page: 1,
+        limit: 20,
+        items: [],
+      });
+    });
+    vi.mocked(historyApi.getDetail).mockResolvedValue(staleReport);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const historyTrendButton = await screen.findByRole('button', { name: '历史趋势' });
+    fireEvent.click(historyTrendButton);
+
+    const range30Button = await screen.findByRole('button', { name: '近30天' });
+    fireEvent.click(range30Button);
+
+    await waitFor(() => {
+      expect(screen.getByText('暂无更多同股历史分析')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '全部历史' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '全部历史' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('暂无更多同股历史分析')).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /继续观察买点/ })).toBeInTheDocument();
+    expect(screen.getByText(/共 1 次分析/)).toBeInTheDocument();
+
+    const historyCalls = vi.mocked(historyApi.getList).mock.calls.filter((call) => call[0]?.stockCode === '600519');
+    expect(historyCalls).toHaveLength(3);
+    expect(historyCalls[1][0]).toHaveProperty('startDate');
+    expect(historyCalls[2][0]).not.toHaveProperty('startDate');
+  });
+
   it('renders active task panel content from dashboard state', async () => {
+    const activeTask = {
+      taskId: 'task-1',
+      stockCode: '600519',
+      stockName: '贵州茅台',
+      status: 'processing' as const,
+      progress: 45,
+      message: '正在抓取最新行情',
+      reportType: 'detailed',
+      createdAt: '2026-03-18T08:00:00Z',
+    };
     vi.mocked(historyApi.getList).mockResolvedValue({
       total: 0,
       page: 1,
       limit: 20,
       items: [],
     });
+    vi.mocked(analysisApi.getTasks).mockResolvedValue({
+      total: 1,
+      pending: 0,
+      processing: 1,
+      tasks: [activeTask],
+    });
 
     useStockPoolStore.setState({
-      activeTasks: [
-        {
-          taskId: 'task-1',
-          stockCode: '600519',
-          stockName: '贵州茅台',
-          status: 'processing',
-          progress: 45,
-          message: '正在抓取最新行情',
-          reportType: 'detailed',
-          createdAt: '2026-03-18T08:00:00Z',
-        },
-      ],
+      activeTasks: [activeTask],
     });
 
     render(

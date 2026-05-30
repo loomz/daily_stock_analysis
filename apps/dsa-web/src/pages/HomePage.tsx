@@ -9,8 +9,9 @@ import { systemConfigApi } from '../api/systemConfig';
 import { ApiErrorAlert, ConfirmDialog, Button, EmptyState, InlineAlert } from '../components/common';
 import { DashboardStateBlock } from '../components/dashboard';
 import { StockAutocomplete } from '../components/StockAutocomplete';
-import { HistoryList } from '../components/history';
-import { ReportMarkdown, ReportSummary } from '../components/report';
+import { HistoryList, StockHistoryTrendDrawer } from '../components/history';
+import { ReportMarkdownDrawer } from '../components/report/ReportMarkdownDrawer';
+import { ReportSummary } from '../components/report/ReportSummary';
 import { TaskPanel } from '../components/tasks';
 import { useDashboardLifecycle, useHomeDashboardState } from '../hooks';
 import type { SetupStatusResponse } from '../types/systemConfig';
@@ -79,6 +80,14 @@ const HomePage: React.FC = () => {
     hasMore,
     selectedReport,
     isLoadingReport,
+    isHistoryTrendOpen,
+    stockHistoryItems,
+    stockHistoryTotal,
+    stockHistoryHasMore,
+    isLoadingStockHistory,
+    isLoadingMoreStockHistory,
+    stockHistoryError,
+    stockHistoryFilters,
     activeTasks,
     markdownDrawerOpen,
     setQuery,
@@ -96,9 +105,14 @@ const HomePage: React.FC = () => {
     syncTaskCreated,
     syncTaskUpdated,
     syncTaskFailed,
+    refreshActiveTasks,
     removeTask,
     openMarkdownDrawer,
     closeMarkdownDrawer,
+    openHistoryTrend,
+    closeHistoryTrend,
+    setStockHistoryRange,
+    loadMoreStockHistory,
     selectedIds,
   } = useHomeDashboardState();
 
@@ -170,6 +184,16 @@ const HomePage: React.FC = () => {
   const reportLanguage = normalizeReportLanguage(selectedReport?.meta.reportLanguage);
   const reportText = getReportText(reportLanguage);
   const isMarketReviewHistoryReport = selectedReport?.meta.reportType === 'market_review';
+  const isHistoryTrendUnavailable = !selectedReport || selectedReport.meta.reportType === 'market_review'
+    || !selectedReport.meta.stockCode;
+
+  useEffect(() => {
+    if (!isHistoryTrendUnavailable || !isHistoryTrendOpen) {
+      return;
+    }
+    closeHistoryTrend();
+  }, [closeHistoryTrend, isHistoryTrendOpen, isHistoryTrendUnavailable]);
+
   const selectedStrategy = useMemo(
     () => analysisSkills.find((skill) => skill.id === selectedStrategyId),
     [analysisSkills, selectedStrategyId],
@@ -290,6 +314,7 @@ const HomePage: React.FC = () => {
     syncTaskCreated,
     syncTaskUpdated,
     syncTaskFailed,
+    refreshActiveTasks,
     removeTask,
   });
 
@@ -787,7 +812,7 @@ const HomePage: React.FC = () => {
                 <DashboardStateBlock title="加载报告中..." loading />
               </div>
             ) : selectedReport ? (
-              <div className="max-w-4xl space-y-4 pb-8">
+              <div className={isHistoryTrendOpen ? 'max-w-6xl space-y-4 pb-8' : 'max-w-4xl space-y-4 pb-8'}>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <Button
                     variant="home-action-ai"
@@ -814,6 +839,22 @@ const HomePage: React.FC = () => {
                   <Button
                     variant="home-action-ai"
                     size="sm"
+                    disabled={selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
+                    className={isHistoryTrendOpen ? 'border-primary/70 bg-primary/15 text-primary shadow-glow-cyan' : undefined}
+                    onClick={() => {
+                      if (isHistoryTrendOpen) {
+                        closeHistoryTrend();
+                        return;
+                      }
+                      void openHistoryTrend();
+                    }}
+                  >
+                    <BarChart3 className="h-4 w-4" />
+                    历史趋势
+                  </Button>
+                  <Button
+                    variant="home-action-ai"
+                    size="sm"
                     disabled={selectedReport.meta.id === undefined}
                     onClick={openMarkdownDrawer}
                   >
@@ -823,7 +864,26 @@ const HomePage: React.FC = () => {
                     {reportText.fullReport}
                   </Button>
                 </div>
-                <ReportSummary data={selectedReport} isHistory />
+                {isHistoryTrendOpen ? (
+                  <StockHistoryTrendDrawer
+                    key={`stock-history-${selectedReport.meta.id}`}
+                    report={selectedReport}
+                    items={stockHistoryItems}
+                    total={stockHistoryTotal}
+                    hasMore={stockHistoryHasMore}
+                    isLoading={isLoadingStockHistory}
+                    isLoadingMore={isLoadingMoreStockHistory}
+                    error={stockHistoryError}
+                    filters={stockHistoryFilters}
+                    onClose={closeHistoryTrend}
+                    onRangeChange={(range) => void setStockHistoryRange(range)}
+                    onLoadMore={() => void loadMoreStockHistory()}
+                    onSelectRecord={(recordId) => void selectHistoryItem(recordId)}
+                    onRetry={() => void openHistoryTrend()}
+                  />
+                ) : (
+                  <ReportSummary data={selectedReport} isHistory />
+                )}
               </div>
             ) : (
               <div className="flex h-full items-center justify-center">
@@ -844,7 +904,8 @@ const HomePage: React.FC = () => {
       </div>
 
       {markdownDrawerOpen && selectedReport?.meta.id ? (
-        <ReportMarkdown
+        <ReportMarkdownDrawer
+          key={selectedReport.meta.id}
           recordId={selectedReport.meta.id}
           stockName={selectedReport.meta.stockName || ''}
           stockCode={selectedReport.meta.stockCode}

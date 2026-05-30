@@ -85,16 +85,21 @@ vi.mock('../../components/settings', () => ({
     </button>
   ),
   LLMChannelEditor: ({
+    items,
     onSaved,
   }: {
+    items: Array<{ key: string; value: string }>;
     onSaved: (items: Array<{ key: string; value: string }>) => void;
   }) => (
-    <button
-      type="button"
-      onClick={() => onSaved([{ key: 'LLM_CHANNELS', value: 'primary,backup' }])}
-    >
-      save llm channels
-    </button>
+    <div>
+      <div data-testid="llm-channel-editor-items">{items.map((item) => item.key).join(',')}</div>
+      <button
+        type="button"
+        onClick={() => onSaved([{ key: 'LLM_CHANNELS', value: 'primary,backup' }])}
+      >
+        save llm channels
+      </button>
+    </div>
   ),
   NotificationTestPanel: ({ items }: { items: Array<{ key: string; value: string }> }) => (
     <div>通知测试面板:{items.map((item) => item.key).join(',')}</div>
@@ -141,7 +146,27 @@ vi.mock('../../components/settings', () => ({
       ))}
     </nav>
   ),
-  SettingsField: ({ item }: { item: { key: string } }) => <div>{item.key}</div>,
+  SettingsField: ({
+    item,
+  }: {
+    item: {
+      key: string;
+      schema?: {
+        description?: string;
+        options?: Array<string | { label: string; value: string }>;
+      };
+    };
+  }) => (
+    <div data-testid={`settings-field-${item.key}`}>
+      <div>{item.key}</div>
+      {item.schema?.description ? <p>{item.schema.description}</p> : null}
+      {item.schema?.options?.map((option) => {
+        const label = typeof option === 'string' ? option : option.label;
+        const value = typeof option === 'string' ? option : option.value;
+        return <span key={`${item.key}-${value}`}>{label}</span>;
+      })}
+    </div>
+  ),
   SettingsLoading: () => <div>loading</div>,
   SettingsPanelErrorBoundary: ({
     title,
@@ -600,6 +625,89 @@ describe('SettingsPage', () => {
     expect(settingsPanelErrorBoundary).toHaveBeenCalledWith('Agent 设置');
   });
 
+  it('renders context compression profile labels and blank preset guidance in agent settings', () => {
+    const configState = buildSystemConfigState();
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({
+      activeCategory: 'agent',
+      itemsByCategory: {
+        ...configState.itemsByCategory,
+        agent: [
+          {
+            key: 'AGENT_CONTEXT_COMPRESSION_PROFILE',
+            value: 'balanced',
+            rawValueExists: true,
+            isMasked: false,
+            schema: {
+              key: 'AGENT_CONTEXT_COMPRESSION_PROFILE',
+              category: 'agent',
+              dataType: 'string',
+              uiControl: 'select',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [
+                { label: '成本优先', value: 'cost' },
+                { label: '均衡推荐', value: 'balanced' },
+                { label: '长上下文原文优先', value: 'long_context_raw_first' },
+              ],
+              validation: {
+                enum: ['cost', 'balanced', 'long_context_raw_first'],
+              },
+              displayOrder: 72,
+            },
+          },
+          {
+            key: 'AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS',
+            value: '',
+            rawValueExists: false,
+            isMasked: false,
+            schema: {
+              key: 'AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS',
+              category: 'agent',
+              dataType: 'integer',
+              uiControl: 'number',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: { min: 1000 },
+              displayOrder: 73,
+              description: '估算历史 token 超过该值时触发摘要；留空则跟随当前上下文压缩策略 profile 默认值。',
+            },
+          },
+          {
+            key: 'AGENT_CONTEXT_PROTECTED_TURNS',
+            value: '',
+            rawValueExists: false,
+            isMasked: false,
+            schema: {
+              key: 'AGENT_CONTEXT_PROTECTED_TURNS',
+              category: 'agent',
+              dataType: 'integer',
+              uiControl: 'number',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: { min: 1 },
+              displayOrder: 74,
+              description: '压缩时最近 N 个用户轮次及其后的回复保持原文；留空则跟随当前上下文压缩策略 profile 默认值。',
+            },
+          },
+        ],
+      },
+    }));
+
+    render(<SettingsPage />);
+
+    expect(screen.getByText('AGENT_CONTEXT_COMPRESSION_PROFILE')).toBeInTheDocument();
+    expect(screen.getByText('成本优先')).toBeInTheDocument();
+    expect(screen.getByText('均衡推荐')).toBeInTheDocument();
+    expect(screen.getByText('长上下文原文优先')).toBeInTheDocument();
+    expect(screen.getByText(/估算历史 token 超过该值时触发摘要/)).toHaveTextContent('留空则跟随当前上下文压缩策略 profile 默认值');
+    expect(screen.getByText(/压缩时最近 N 个用户轮次及其后的回复保持原文/)).toHaveTextContent('留空则跟随当前上下文压缩策略 profile 默认值');
+  });
+
   it('reset button semantic: discards local changes without network request', () => {
     // Simulate user has unsaved drafts
     const dirtyState = buildSystemConfigState({
@@ -644,6 +752,79 @@ describe('SettingsPage', () => {
 
     expect(refreshAfterExternalSave).toHaveBeenCalledWith(['LLM_CHANNELS']);
     expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes LLM channel support keys to the channel editor without rendering them as generic fields', async () => {
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({
+      activeCategory: 'ai_model',
+      itemsByCategory: {
+        ...buildSystemConfigState().itemsByCategory,
+        ai_model: [
+          {
+            key: 'LLM_CHANNELS',
+            value: 'my_proxy',
+            rawValueExists: true,
+            isMasked: false,
+            schema: {
+              key: 'LLM_CHANNELS',
+              category: 'ai_model',
+              dataType: 'string',
+              uiControl: 'textarea',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: {},
+              displayOrder: 1,
+            },
+          },
+          {
+            key: 'LLM_MY_PROXY_API_KEY',
+            value: 'sk-test',
+            rawValueExists: true,
+            isMasked: false,
+            schema: {
+              key: 'LLM_MY_PROXY_API_KEY',
+              category: 'ai_model',
+              dataType: 'string',
+              uiControl: 'password',
+              isSensitive: true,
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: {},
+              displayOrder: 9000,
+            },
+          },
+          {
+            key: 'LLM_MY_PROXY_MODELS',
+            value: 'gpt-5.5',
+            rawValueExists: true,
+            isMasked: false,
+            schema: {
+              key: 'LLM_MY_PROXY_MODELS',
+              category: 'ai_model',
+              dataType: 'string',
+              uiControl: 'text',
+              isSensitive: false,
+              isRequired: false,
+              isEditable: true,
+              options: [],
+              validation: {},
+              displayOrder: 9000,
+            },
+          },
+        ],
+      },
+    }));
+
+    render(<SettingsPage />);
+
+    expect(await screen.findByTestId('llm-channel-editor-items')).toHaveTextContent(
+      'LLM_CHANNELS,LLM_MY_PROXY_API_KEY,LLM_MY_PROXY_MODELS',
+    );
+    expect(screen.queryByTestId('settings-field-LLM_MY_PROXY_API_KEY')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('settings-field-LLM_MY_PROXY_MODELS')).not.toBeInTheDocument();
   });
 
   it('renders notification test panel before notification fields', () => {
