@@ -88,6 +88,7 @@ const MobileHomePage: React.FC = () => {
     syncTaskCreated,
     syncTaskUpdated,
     syncTaskFailed,
+    refreshActiveTasks,
     removeTask,
     openMarkdownDrawer,
     closeMarkdownDrawer,
@@ -244,6 +245,7 @@ const MobileHomePage: React.FC = () => {
   useDashboardLifecycle({
     loadInitialHistory,
     refreshHistory,
+    refreshActiveTasks,
     syncTaskCreated,
     syncTaskUpdated,
     syncTaskFailed,
