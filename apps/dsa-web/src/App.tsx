@@ -9,6 +9,7 @@ import {
 } from './components/layout/RouteBoundary';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useAgentChatStore } from './stores/agentChatStore';
+import { isDesktopRoute, isMobileDevice } from './utils/device';
 import './App.css';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
@@ -64,6 +65,11 @@ const AppContent: React.FC = () => {
 
   if (location.pathname === '/login') {
     return <Navigate to="/" replace />;
+  }
+
+  // 移动端设备访问桌面路由时自动跳转到移动版首页
+  if (isMobileDevice() && isDesktopRoute(location.pathname)) {
+    return <Navigate to="/m" replace />;
   }
 
   return (
