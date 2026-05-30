@@ -177,12 +177,12 @@ class EastmoneyChipFetcher(BaseFetcher):
             if EastmoneyChipFetcher._undetected_available:
                 try:
                     import undetected_chromedriver as _uc  # noqa: F401
-                    logger.debug(
+                    logger.info(
                         "[EastmoneyChipFetcher] undetected-chromedriver 可用，将作为首选驱动"
                     )
                 except ImportError:
                     EastmoneyChipFetcher._undetected_available = False
-                    logger.debug(
+                    logger.info(
                         "[EastmoneyChipFetcher] undetected-chromedriver 未安装，"
                         "将使用普通 Selenium"
                     )
