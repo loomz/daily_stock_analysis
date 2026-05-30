@@ -218,15 +218,17 @@ class EastmoneyChipFetcher(BaseFetcher):
 
                     result = {"driver": None, "error": None}
 
+                    # 优先使用本地已有的 chromedriver，避免 uc 去 Google 下载
+                    cd_path = _find_chromedriver_path()
+
                     def _start_uc():
                         try:
+                            kwargs = {"options": opts}
                             if chrome_path:
-                                result["driver"] = uc.Chrome(
-                                    browser_executable_path=chrome_path,
-                                    options=opts,
-                                )
-                            else:
-                                result["driver"] = uc.Chrome(options=opts)
+                                kwargs["browser_executable_path"] = chrome_path
+                            if cd_path:
+                                kwargs["driver_executable_path"] = cd_path
+                            result["driver"] = uc.Chrome(**kwargs)
                         except Exception as e:
                             result["error"] = e
 
@@ -313,9 +315,41 @@ class EastmoneyChipFetcher(BaseFetcher):
                             Object.defineProperty(navigator, 'languages', {
                                 get: () => ['zh-CN', 'zh', 'en'],
                             });
+                            // 隐藏 headless 特征
+                            Object.defineProperty(navigator, 'plugins', {
+                                get: () => [1, 2, 3, 4, 5],
+                            });
+                            Object.defineProperty(navigator, 'mimeTypes', {
+                                get: () => [1, 2, 3, 4],
+                            });
+                            window.chrome = {
+                                runtime: {},
+                                loadTimes: function() {},
+                                csi: function() {},
+                            };
+                            // 覆盖 toString 反检测
+                            const newProto = Navigator.prototype;
+                            Object.defineProperty(newProto, 'constructor', {
+                                value: window.Navigator,
+                            });
                         ''',
                     },
                 )
+
+                # --- CDP: 隐藏 headless 滚动条特征 ---
+                try:
+                    driver.execute_cdp_cmd('Emulation.setScrollbarsHide', {'hide': True})
+                except Exception:
+                    pass
+
+                # --- CDP: 设置视口大小，模拟真实浏览器 ---
+                try:
+                    driver.execute_cdp_cmd(
+                        'Emulation.setDeviceMetricsOverride',
+                        {'width': 1920, 'height': 1080, 'deviceScaleFactor': 1, 'mobile': False},
+                    )
+                except Exception:
+                    pass
 
             self._driver = driver
             self._driver.set_page_load_timeout(20)
