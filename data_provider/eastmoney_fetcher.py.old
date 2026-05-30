@@ -21,7 +21,6 @@ import os
 import random
 import re
 import shutil
-import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -134,7 +133,6 @@ class EastmoneyChipFetcher(BaseFetcher):
     priority: int = 0
 
     _selenium_available: bool = True
-    _undetected_available: bool = True
 
     # 常见验证码 / 滑块元素选择器
     _CAPTCHA_SELECTORS = [
@@ -173,20 +171,6 @@ class EastmoneyChipFetcher(BaseFetcher):
                 )
                 return
 
-            # 检查 undetected-chromedriver（深度反检测，优先使用）
-            if EastmoneyChipFetcher._undetected_available:
-                try:
-                    import undetected_chromedriver as _uc  # noqa: F401
-                    logger.debug(
-                        "[EastmoneyChipFetcher] undetected-chromedriver 可用，将作为首选驱动"
-                    )
-                except ImportError:
-                    EastmoneyChipFetcher._undetected_available = False
-                    logger.debug(
-                        "[EastmoneyChipFetcher] undetected-chromedriver 未安装，"
-                        "将使用普通 Selenium"
-                    )
-
             # 检查 chromedriver（非必须，Selenium Manager 可自动下载）
             cd_path = _find_chromedriver_path()
             if cd_path is None:
@@ -196,150 +180,79 @@ class EastmoneyChipFetcher(BaseFetcher):
                 )
 
     def _get_driver(self):
-        """获取或创建浏览器驱动实例
-
-        优先级：
-        1. undetected-chromedriver（深度反检测，适合云环境）
-        2. 普通 Selenium + CDP 反检测（本地可用）
-        """
+        """获取或创建浏览器驱动实例（Selenium + CDP 反检测）"""
         if self._driver is None:
+            from selenium import webdriver
+            from selenium.webdriver.chrome.options import Options
+            from selenium.webdriver.chrome.service import Service
+
             user_agent = random.choice(_USER_AGENTS)
-            driver = None
+            options = Options()
+            options.add_argument('--headless=new')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-blink-features=AutomationControlled')
+            options.add_argument('--window-size=1920,1080')
+            options.add_argument(f'--user-agent={user_agent}')
+            options.add_argument('--lang=zh-CN,zh;q=0.9')
 
-            # 尝试 undetected-chromedriver（深度修补 ChromeDriver 绕过检测）
-            # uc.Chrome 初始化可能很慢（下载/修补 driver），用线程 + 超时保护
-            if EastmoneyChipFetcher._undetected_available:
-                try:
-                    import undetected_chromedriver as uc
+            # Let Selenium Manager locate the Chrome binary and download matching driver
+            chrome_path = _find_chrome_binary()
+            if chrome_path:
+                options.binary_location = chrome_path
+                logger.debug("[EastmoneyChipFetcher] Chrome binary: %s", chrome_path)
 
-                    chrome_path = _find_chrome_binary()
-                    opts = self._build_chrome_options(user_agent)
-                    logger.info("[EastmoneyChipFetcher] 正在启动 undetected-chromedriver...")
+            cd_path = _find_chromedriver_path()
+            if cd_path:
+                service = Service(executable_path=cd_path)
+                self._driver = webdriver.Chrome(options=options, service=service)
+            else:
+                self._driver = webdriver.Chrome(options=options)
 
-                    result = {"driver": None, "error": None}
-
-                    def _start_uc():
-                        try:
-                            if chrome_path:
-                                result["driver"] = uc.Chrome(
-                                    browser_executable_path=chrome_path,
-                                    options=opts,
-                                )
-                            else:
-                                result["driver"] = uc.Chrome(options=opts)
-                        except Exception as e:
-                            result["error"] = e
-
-                    t = threading.Thread(target=_start_uc, daemon=True)
-                    t.start()
-                    t.join(timeout=30)
-
-                    if t.is_alive():
-                        logger.warning(
-                            "[EastmoneyChipFetcher] undetected-chromedriver 启动超时 (30s), "
-                            "回退到普通 Selenium"
-                        )
-                    elif result["error"]:
-                        logger.warning(
-                            f"[EastmoneyChipFetcher] undetected-chromedriver 启动失败 "
-                            f"({result['error']}), 回退到普通 Selenium"
-                        )
-                    else:
-                        driver = result["driver"]
-                        logger.info(
-                            "[EastmoneyChipFetcher] 使用 undetected-chromedriver"
-                        )
-
-                except Exception as e:
-                    logger.warning(
-                        f"[EastmoneyChipFetcher] undetected-chromedriver 异常 ({e}), "
-                        "回退到普通 Selenium"
-                    )
-
-            # 回退到普通 Selenium + CDP 反检测
-            if driver is None:
-                from selenium import webdriver as _wd
-                from selenium.webdriver.chrome.service import Service
-
-                cd_path = _find_chromedriver_path()
-                if cd_path:
-                    service = Service(executable_path=cd_path)
-                    driver = _wd.Chrome(
-                        options=self._build_chrome_options(user_agent),
-                        service=service,
-                    )
-                else:
-                    driver = _wd.Chrome(
-                        options=self._build_chrome_options(user_agent)
-                    )
-
-                logger.info("[EastmoneyChipFetcher] 使用普通 Selenium + CDP 反检测")
-
-                # --- CDP: 启用 Network domain（必须在设置请求头之前） ---
-                driver.execute_cdp_cmd('Network.enable', {})
-
-                # --- CDP: 完整 Client Hints + 反检测请求头 ---
-                driver.execute_cdp_cmd(
-                    'Network.setExtraHTTPHeaders',
-                    {
-                        'headers': {
-                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                            'Sec-CH-UA': '"Not A(Brand";v="99", "Google Chrome";v="131", "Chromium";v="131"',
-                            'Sec-CH-UA-Mobile': '?0',
-                            'Sec-CH-UA-Platform': '"Windows"',
-                        },
-                    },
-                )
-
-                # --- CDP: 深度伪装浏览器指纹 ---
-                driver.execute_cdp_cmd(
-                    'Page.addScriptToEvaluateOnNewDocument',
-                    {
-                        'source': '''
-                            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                            Object.defineProperty(navigator, 'maxTouchPoints', {get: () => 0});
-                            const originalQuery = navigator.permissions.query;
-                            navigator.permissions.query = (param) => {
-                                return Promise.resolve({state: 'granted'});
-                            };
-                            const getParameter = WebGLRenderingContext.prototype.getParameter;
-                            WebGLRenderingContext.prototype.getParameter = function(param) {
-                                if (param === 37445) return 'Google Inc. (NVIDIA)';
-                                if (param === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce, OpenGL)';
-                                return getParameter.apply(this, arguments);
-                            };
-                            if (!window.chrome) window.chrome = {runtime: {}};
-                            Object.defineProperty(navigator, 'languages', {
-                                get: () => ['zh-CN', 'zh', 'en'],
-                            });
-                        ''',
-                    },
-                )
-
-            self._driver = driver
             self._driver.set_page_load_timeout(20)
 
+            # --- CDP: 启用 Network domain（必须在设置请求头之前） ---
+            self._driver.execute_cdp_cmd('Network.enable', {})
+
+            # --- CDP: 完整 Client Hints + 反检测请求头 ---
+            self._driver.execute_cdp_cmd(
+                'Network.setExtraHTTPHeaders',
+                {
+                    'headers': {
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                        'Sec-CH-UA': '"Not A(Brand";v="99", "Google Chrome";v="131", "Chromium";v="131"',
+                        'Sec-CH-UA-Mobile': '?0',
+                        'Sec-CH-UA-Platform': '"Windows"',
+                    },
+                },
+            )
+
+            # --- CDP: 深度伪装浏览器指纹 ---
+            self._driver.execute_cdp_cmd(
+                'Page.addScriptToEvaluateOnNewDocument',
+                {
+                    'source': '''
+                        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                        Object.defineProperty(navigator, 'maxTouchPoints', {get: () => 0});
+                        const originalQuery = navigator.permissions.query;
+                        navigator.permissions.query = (param) => {
+                            return Promise.resolve({state: 'granted'});
+                        };
+                        const getParameter = WebGLRenderingContext.prototype.getParameter;
+                        WebGLRenderingContext.prototype.getParameter = function(param) {
+                            if (param === 37445) return 'Google Inc. (NVIDIA)';
+                            if (param === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce, OpenGL)';
+                            return getParameter.apply(this, arguments);
+                        };
+                        if (!window.chrome) window.chrome = {runtime: {}};
+                        Object.defineProperty(navigator, 'languages', {
+                            get: () => ['zh-CN', 'zh', 'en'],
+                        });
+                    ''',
+                },
+            )
         return self._driver
-
-    @staticmethod
-    def _build_chrome_options(user_agent: str):
-        """构建 Chrome Options 对象"""
-        from selenium.webdriver.chrome.options import Options
-
-        options = Options()
-        options.add_argument('--headless=new')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument(f'--user-agent={user_agent}')
-        options.add_argument('--lang=zh-CN,zh;q=0.9')
-
-        chrome_path = _find_chrome_binary()
-        if chrome_path:
-            options.binary_location = chrome_path
-        return options
 
     def _close_driver(self):
         """关闭浏览器驱动"""
