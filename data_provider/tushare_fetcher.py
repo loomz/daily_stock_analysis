@@ -709,8 +709,8 @@ class TushareFetcher(BaseFetcher):
         # 尝试 Pro 接口
         try:
             ts_code = self._convert_stock_code(stock_code)
-            # 尝试调用 Pro 实时接口 (需要积分)
-            df = self._api.quotation(ts_code=ts_code)
+            # 尝试调用 Pro 实时接口 rt_k (需要2000积分)
+            df = self._api.rt_k(ts_code=ts_code)
 
             if df is not None and not df.empty:
                 row = df.iloc[0]
