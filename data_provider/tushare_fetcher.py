@@ -87,6 +87,12 @@ class _TushareHttpClient:
             "params": kwargs,
             "fields": fields,
         }
+        # 打印调用信息（token 脱敏）
+        masked_token = self._token[:8] + "..." + self._token[-4:] if len(self._token) > 12 else "***"
+        logger.info(
+            "[Tushare] api=%s, url=%s, token=%s, params=%s",
+            api_name, self._api_url, masked_token, kwargs,
+        )
         res = requests.post(self._api_url, json=req_params, timeout=self._timeout)
         if res.status_code != 200:
             raise Exception(f"Tushare API HTTP {res.status_code}")
