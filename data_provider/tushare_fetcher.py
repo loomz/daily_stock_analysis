@@ -712,9 +712,17 @@ class TushareFetcher(BaseFetcher):
             # 尝试调用 Pro 实时接口 rt_k (需要2000积分)
             df = self._api.rt_k(ts_code=ts_code)
 
+            logger.info(
+                f"Tushare rt_k 返回: stock_code={stock_code}, ts_code={ts_code}, "
+                f"type={type(df).__name__}, is_none={df is None}, "
+                f"is_empty={df.empty if hasattr(df, 'empty') else 'N/A'}, "
+                f"len={len(df) if hasattr(df, '__len__') else 'N/A'}, "
+                f"columns={list(df.columns) if hasattr(df, 'columns') else 'N/A'}"
+            )
+
             if df is not None and not df.empty:
                 row = df.iloc[0]
-                logger.debug(f"Tushare Pro 实时行情获取成功: {stock_code}")
+                logger.info(f"Tushare Pro 实时行情获取成功: {stock_code}, row={row.to_dict()}")
 
                 return UnifiedRealtimeQuote(
                     code=normalized_code,
@@ -1265,6 +1273,190 @@ class TushareFetcher(BaseFetcher):
             "70集中度": round(concentration_70/100, 4)
         }
 
+    def get_forecast(self, ts_code: str = "", period: str = "", type: str = "",
+                     start_date: str = "", end_date: str = "", ann_date: str = "") -> Optional[pd.DataFrame]:
+        """
+        获取业绩预告数据
+
+        数据源：ts.pro_api().forecast()
+        权限：需要至少2000积分
+
+        参数说明：
+        - ts_code: 股票代码（二选一：ts_code 或 ann_date/start_date）
+        - ann_date: 公告日期（二选一）
+        - start_date: 公告开始日期
+        - end_date: 公告结束日期
+        - period: 报告期（每个季度最后一天的日期，如20171231年报，20170630半年报，20170930三季报）
+        - type: 预告类型（预增/预减/扭亏/首亏/续亏/续盈/略增/略减）
+
+        返回字段：
+        ts_code, ann_date, end_date, type, p_change_min, p_change_max,
+        net_profit_min, net_profit_max, last_parent_net, first_ann_date,
+        summary, change_reason
+
+        Args:
+            ts_code: Tushare 格式股票代码，如 '600519.SH'
+            period: 报告期，如 '20251231'
+            type: 预告类型筛选
+            start_date: 公告开始日期，如 '20250101'
+            end_date: 公告结束日期，如 '20250331'
+            ann_date: 公告日期
+
+        Returns:
+            业绩预告 DataFrame，失败返回 None
+        """
+        if self._api is None:
+            logger.warning("Tushare API 未初始化，无法获取业绩预告数据")
+            return None
+
+        # 参数校验：至少需要一种查询方式
+        has_ts_code = bool(ts_code and ts_code.strip())
+        has_ann_date = bool(ann_date and ann_date.strip())
+        has_date_range = bool(start_date and start_date.strip())
+        if not (has_ts_code or has_ann_date or has_date_range):
+            logger.warning("get_forecast: 请至少提供 ts_code、ann_date 或 start_date 中的一个参数")
+            return None
+
+        # 如果传入的是纯数字代码，转换为 ts_code 格式
+        if has_ts_code and '.' not in ts_code:
+            try:
+                ts_code = self._convert_stock_code(ts_code)
+            except Exception as e:
+                logger.warning(f"[Tushare] 转换股票代码失败 {ts_code}: {e}")
+                return None
+
+        try:
+            self._check_rate_limit()
+
+            fields = (
+                "ts_code,ann_date,end_date,type,p_change_min,p_change_max,"
+                "net_profit_min,net_profit_max,last_parent_net,first_ann_date,"
+                "summary,change_reason"
+            )
+
+            kwargs: Dict[str, Any] = {
+                "fields": fields,
+            }
+            if has_ts_code:
+                kwargs["ts_code"] = ts_code.strip()
+            if has_ann_date:
+                kwargs["ann_date"] = ann_date.strip()
+            if has_date_range:
+                kwargs["start_date"] = start_date.strip()
+            if end_date and end_date.strip():
+                kwargs["end_date"] = end_date.strip()
+            if period and period.strip():
+                kwargs["period"] = period.strip()
+            if type and type.strip():
+                kwargs["type"] = type.strip()
+
+            df = self._api.forecast(**kwargs)
+
+            if df is None or df.empty:
+                logger.info(f"[Tushare] forecast 返回为空: kwargs={kwargs}")
+                return None
+
+            logger.info(f"[Tushare] 获取业绩预告成功: ts_code={ts_code}, period={period}, 共 {len(df)} 条")
+            return df
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in ['quota', '配额', '权限', '积分']):
+                logger.warning(f"[Tushare] 获取业绩预告失败，可能是积分不足: {e}")
+            else:
+                logger.warning(f"[Tushare] 获取业绩预告失败: {e}")
+            return None
+
+    def get_express(self, ts_code: str, period: str = "",
+                    start_date: str = "", end_date: str = "", ann_date: str = "") -> Optional[pd.DataFrame]:
+        """
+        获取上市公司业绩快报
+
+        数据源：ts.pro_api().express()
+        权限：需要至少2000积分
+
+        参数说明：
+        - ts_code: 股票代码（必填）
+        - ann_date: 公告日期
+        - start_date: 公告开始日期
+        - end_date: 公告结束日期
+        - period: 报告期（每个季度最后一天的日期，如20171231年报，20170630半年报，20170930三季报）
+
+        返回字段：
+        ts_code, ann_date, end_date, revenue, operate_profit, total_profit,
+        n_income, total_assets, total_hldr_eqy_exc_min_int, diluted_eps,
+        diluted_roe, yoy_net_profit, bps, yoy_sales, yoy_op, yoy_tp,
+        yoy_dedu_np, yoy_eps, yoy_roe, growth_assets, yoy_equity,
+        growth_bps, or_last_year, op_last_year, tp_last_year, np_last_year,
+        eps_last_year, open_net_assets, open_bps, perf_summary, is_audit, remark
+
+        Args:
+            ts_code: Tushare 格式股票代码，如 '600519.SH'，也支持纯数字
+            period: 报告期，如 '20251231'
+            start_date: 公告开始日期，如 '20250101'
+            end_date: 公告结束日期，如 '20250331'
+            ann_date: 公告日期
+
+        Returns:
+            业绩快报 DataFrame，失败返回 None
+        """
+        if self._api is None:
+            logger.warning("Tushare API 未初始化，无法获取业绩快报数据")
+            return None
+
+        if not ts_code or not ts_code.strip():
+            logger.warning("get_express: ts_code 为必填参数")
+            return None
+
+        # 如果传入的是纯数字代码，转换为 ts_code 格式
+        if '.' not in ts_code:
+            try:
+                ts_code = self._convert_stock_code(ts_code)
+            except Exception as e:
+                logger.warning(f"[Tushare] 转换股票代码失败 {ts_code}: {e}")
+                return None
+
+        try:
+            self._check_rate_limit()
+
+            fields = (
+                "ts_code,ann_date,end_date,revenue,operate_profit,total_profit,"
+                "n_income,total_assets,total_hldr_eqy_exc_min_int,diluted_eps,"
+                "diluted_roe,yoy_net_profit,bps,yoy_sales,yoy_op,yoy_tp,"
+                "yoy_dedu_np,yoy_eps,yoy_roe,growth_assets,yoy_equity,"
+                "growth_bps,or_last_year,op_last_year,tp_last_year,np_last_year,"
+                "eps_last_year,open_net_assets,open_bps,perf_summary,is_audit,remark"
+            )
+
+            kwargs: Dict[str, Any] = {
+                "fields": fields,
+                "ts_code": ts_code.strip(),
+            }
+            if ann_date and ann_date.strip():
+                kwargs["ann_date"] = ann_date.strip()
+            if start_date and start_date.strip():
+                kwargs["start_date"] = start_date.strip()
+            if end_date and end_date.strip():
+                kwargs["end_date"] = end_date.strip()
+            if period and period.strip():
+                kwargs["period"] = period.strip()
+
+            df = self._api.express(**kwargs)
+
+            if df is None or df.empty:
+                logger.info(f"[Tushare] express 返回为空: ts_code={ts_code}")
+                return None
+
+            logger.info(f"[Tushare] 获取业绩快报成功: ts_code={ts_code}, period={period}, 共 {len(df)} 条")
+            return df
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in ['quota', '配额', '权限', '积分']):
+                logger.warning(f"[Tushare] 获取业绩快报失败，可能是积分不足: {e}")
+            else:
+                logger.warning(f"[Tushare] 获取业绩快报失败: {e}")
+            return None
 
 
 if __name__ == "__main__":

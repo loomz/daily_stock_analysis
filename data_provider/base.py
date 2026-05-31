@@ -65,6 +65,24 @@ def summarize_exception(exc: Exception) -> Tuple[str, str]:
     return error_type, " ".join(message.split())
 
 
+def _to_native(val: Any) -> Any:
+    """Convert pandas/numpy scalar to native Python type for serialization."""
+    if val is None:
+        return None
+    if hasattr(val, "isna") and val.isna():
+        return None
+    if isinstance(val, (bool,)):
+        return bool(val)
+    if isinstance(val, (int,)):
+        return int(val)
+    if isinstance(val, (float,)):
+        v = float(val)
+        if v != v:  # NaN
+            return None
+        return v
+    return str(val)
+
+
 def normalize_stock_code(stock_code: str) -> str:
     """
     Normalize stock code by stripping exchange prefixes/suffixes.
@@ -2283,6 +2301,7 @@ class DataFetcherManager:
             "capital_flow",
             "dragon_tiger",
             "boards",
+            "forecast",
         ):
             payload = context.get(block, {})
             if isinstance(payload, dict) and DataFetcherManager._has_meaningful_payload(payload.get("data")):
@@ -2328,6 +2347,12 @@ class DataFetcherManager:
                 [reason],
             ),
             "boards": self._build_fundamental_block(
+                "not_supported",
+                {},
+                [{"provider": "fundamental_pipeline", "result": "not_supported", "duration_ms": 0}],
+                [reason],
+            ),
+            "forecast": self._build_fundamental_block(
                 "not_supported",
                 {},
                 [{"provider": "fundamental_pipeline", "result": "not_supported", "duration_ms": 0}],
@@ -2392,6 +2417,7 @@ class DataFetcherManager:
             "dragon_tiger": {},
             "boards": {},
             "belong_boards": [],
+            "forecast": {},
             "coverage": {},
             "source_chain": [],
             "errors": [],
@@ -2476,9 +2502,9 @@ class DataFetcherManager:
             list(adapter_errors),
         )
 
-        # institution / capital_flow / dragon_tiger / boards: keep as not_supported
+        # institution / capital_flow / dragon_tiger / boards / forecast: keep as not_supported
         # for offshore markets — no equivalent data feed today.
-        for block in ("institution", "capital_flow", "dragon_tiger", "boards"):
+        for block in ("institution", "capital_flow", "dragon_tiger", "boards", "forecast"):
             result_ctx[block] = self._build_fundamental_block(
                 "not_supported",
                 {},
@@ -2496,9 +2522,10 @@ class DataFetcherManager:
             "capital_flow": "not_supported",
             "dragon_tiger": "not_supported",
             "boards": "not_supported",
+            "forecast": "not_supported",
         }
         result_ctx["coverage"] = block_statuses
-        for block in ("valuation", "growth", "earnings", "institution", "capital_flow", "dragon_tiger", "boards"):
+        for block in ("valuation", "growth", "earnings", "institution", "capital_flow", "dragon_tiger", "boards", "forecast"):
             result_ctx["errors"].extend(result_ctx[block].get("errors", []))
             result_ctx["source_chain"].extend(result_ctx[block].get("source_chain", []))
 
@@ -2531,6 +2558,7 @@ class DataFetcherManager:
             "capital_flow",
             "dragon_tiger",
             "boards",
+            "forecast",
         )
         blocks = {
             block: self._build_fundamental_block(
@@ -2606,6 +2634,7 @@ class DataFetcherManager:
             "capital_flow": {},
             "dragon_tiger": {},
             "boards": {},
+            "forecast": {},
             "coverage": {},
             "source_chain": [],
             "errors": [],
@@ -2787,6 +2816,12 @@ class DataFetcherManager:
                 [{"provider": "fundamental_pipeline", "result": "not_supported", "duration_ms": 0}],
                 ["etf not fully supported"],
             )
+            result_ctx["forecast"] = self._build_fundamental_block(
+                "not_supported",
+                {},
+                [{"provider": "fundamental_pipeline", "result": "not_supported", "duration_ms": 0}],
+                ["etf not fully supported"],
+            )
             result_ctx["status"] = "partial"
         else:
             capital_flow_budget = min(fetch_timeout, remaining_seconds)
@@ -2810,6 +2845,14 @@ class DataFetcherManager:
                 budget_seconds=min(fetch_timeout, remaining_seconds),
             )
 
+            forecast_budget = min(fetch_timeout, remaining_seconds)
+            forecast_start = time.time()
+            result_ctx["forecast"] = self.get_forecast_context(
+                stock_code,
+                budget_seconds=forecast_budget,
+            )
+            _consume_budget(int((time.time() - forecast_start) * 1000))
+
         block_statuses = {
             "valuation": result_ctx["valuation"].get("status", "not_supported"),
             "growth": result_ctx["growth"].get("status", "not_supported"),
@@ -2818,6 +2861,7 @@ class DataFetcherManager:
             "capital_flow": result_ctx["capital_flow"].get("status", "not_supported"),
             "dragon_tiger": result_ctx["dragon_tiger"].get("status", "not_supported"),
             "boards": result_ctx["boards"].get("status", "not_supported"),
+            "forecast": result_ctx["forecast"].get("status", "not_supported"),
         }
         result_ctx["coverage"] = block_statuses
         for block in (
@@ -2828,6 +2872,7 @@ class DataFetcherManager:
             "capital_flow",
             "dragon_tiger",
             "boards",
+            "forecast",
         ):
             result_ctx["errors"].extend(result_ctx[block].get("errors", []))
             result_ctx["source_chain"].extend(result_ctx[block].get("source_chain", []))
@@ -3078,6 +3123,140 @@ class DataFetcherManager:
                     logger.warning(f"[{fetcher.name}] 获取板块排行失败: {error_reason}")
 
             return [], [], source_chain, last_error
+
+    def get_forecast_context(self, stock_code: str, budget_seconds: Optional[float] = None) -> Dict[str, Any]:
+        """业绩预告/快报块（Tushare forecast + express，fail-open）。"""
+        from src.config import get_config
+
+        config = get_config()
+        stock_code = normalize_stock_code(stock_code)
+        timeout = float(budget_seconds if budget_seconds is not None else config.fundamental_fetch_timeout_seconds)
+        if _market_tag(stock_code) != "cn" or _is_etf_code(stock_code):
+            return self._build_fundamental_block(
+                "not_supported",
+                {},
+                [{"provider": "fundamental_pipeline", "result": "not_supported", "duration_ms": 0}],
+                ["not supported"],
+            )
+
+        if timeout <= 0:
+            return self._build_fundamental_block(
+                "failed",
+                {},
+                [{"provider": "fundamental_pipeline", "result": "failed", "duration_ms": 0}],
+                ["fundamental stage timeout"],
+            )
+
+        fetcher = self._get_fetcher_by_name("TushareFetcher")
+        if fetcher is None:
+            return self._build_fundamental_block(
+                "not_supported",
+                {},
+                [{"provider": "fundamental_pipeline", "result": "not_supported", "duration_ms": 0}],
+                ["TushareFetcher not available"],
+            )
+
+        source_chain: List[Dict[str, Any]] = []
+        errors: List[str] = []
+        forecast_rows: List[Dict[str, Any]] = []
+        express_rows: List[Dict[str, Any]] = []
+
+        # --- forecast ---
+        if timeout > 0:
+            start = time.time()
+            try:
+                df = self._call_fetcher_method(
+                    fetcher,
+                    "get_forecast",
+                    {"ts_code": stock_code},
+                )
+                cost_ms = int((time.time() - start) * 1000)
+                if df is not None and not df.empty:
+                    for _, row in df.iterrows():
+                        record = {}
+                        for col in ("ts_code", "ann_date", "end_date", "type",
+                                    "p_change_min", "p_change_max",
+                                    "net_profit_min", "net_profit_max",
+                                    "last_parent_net", "first_ann_date",
+                                    "summary", "change_reason"):
+                            val = row.get(col)
+                            if hasattr(val, "isna") and val.isna():
+                                continue
+                            record[col] = _to_native(val)
+                        forecast_rows.append(record)
+                    source_chain.append(
+                        {"provider": "TushareFetcher", "result": "ok", "endpoint": "forecast", "duration_ms": cost_ms}
+                    )
+                    logger.info(f"[TushareFetcher] forecast 获取成功: {stock_code}, 共 {len(forecast_rows)} 条, 耗时 {cost_ms}ms")
+                else:
+                    source_chain.append(
+                        {"provider": "TushareFetcher", "result": "empty", "endpoint": "forecast", "duration_ms": cost_ms}
+                    )
+                    logger.info(f"[TushareFetcher] forecast 返回为空: {stock_code}, 耗时 {cost_ms}ms")
+            except Exception as e:
+                cost_ms = int((time.time() - start) * 1000)
+                etype, ereason = summarize_exception(e)
+                errors.append(f"forecast: {ereason}")
+                source_chain.append(
+                    {"provider": "TushareFetcher", "result": "failed", "endpoint": "forecast", "duration_ms": cost_ms, "error": ereason}
+                )
+                logger.warning(f"[TushareFetcher] forecast 获取失败: {stock_code}, {ereason}, 耗时 {cost_ms}ms")
+
+        # --- express ---
+        start = time.time()
+        try:
+            df = self._call_fetcher_method(
+                fetcher,
+                "get_express",
+                {"ts_code": stock_code},
+            )
+            cost_ms = int((time.time() - start) * 1000)
+            if df is not None and not df.empty:
+                for _, row in df.iterrows():
+                    record = {}
+                    for col in ("ts_code", "ann_date", "end_date", "revenue",
+                                "operate_profit", "total_profit", "n_income",
+                                "total_assets", "total_hldr_eqy_exc_min_int",
+                                "diluted_eps", "diluted_roe", "yoy_net_profit",
+                                "bps", "yoy_sales", "yoy_op", "yoy_tp",
+                                "yoy_dedu_np", "yoy_eps", "yoy_roe",
+                                "growth_assets", "yoy_equity", "growth_bps",
+                                "perf_summary", "is_audit", "remark"):
+                        val = row.get(col)
+                        if hasattr(val, "isna") and val.isna():
+                            continue
+                        record[col] = _to_native(val)
+                    express_rows.append(record)
+                source_chain.append(
+                    {"provider": "TushareFetcher", "result": "ok", "endpoint": "express", "duration_ms": cost_ms}
+                )
+                logger.info(f"[TushareFetcher] express 获取成功: {stock_code}, 共 {len(express_rows)} 条, 耗时 {cost_ms}ms")
+            else:
+                source_chain.append(
+                    {"provider": "TushareFetcher", "result": "empty", "endpoint": "express", "duration_ms": cost_ms}
+                )
+                logger.info(f"[TushareFetcher] express 返回为空: {stock_code}, 耗时 {cost_ms}ms")
+        except Exception as e:
+            cost_ms = int((time.time() - start) * 1000)
+            etype, ereason = summarize_exception(e)
+            errors.append(f"express: {ereason}")
+            source_chain.append(
+                {"provider": "TushareFetcher", "result": "failed", "endpoint": "express", "duration_ms": cost_ms, "error": ereason}
+            )
+            logger.warning(f"[TushareFetcher] express 获取失败: {stock_code}, {ereason}, 耗时 {cost_ms}ms")
+
+        has_data = len(forecast_rows) > 0 or len(express_rows) > 0
+        status = "ok" if has_data else ("partial" if len(errors) == 0 else "failed")
+        data = {
+            "forecast": forecast_rows,
+            "express": express_rows,
+        }
+        return self._build_fundamental_block(
+            status,
+            data,
+            source_chain,
+            errors,
+        )
 
     def get_sector_rankings(self, n: int = 5) -> Tuple[List[Dict], List[Dict]]:
         """获取板块涨跌榜（自动切换数据源）"""
