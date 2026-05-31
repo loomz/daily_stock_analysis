@@ -730,7 +730,7 @@ class TushareFetcher(BaseFetcher):
                 )
         except Exception as e:
             # 仅记录调试日志，不报错，继续尝试降级
-            logger.debug(f"Tushare Pro 实时行情不可用 (可能是积分不足): {e}")
+            logger.warning(f"Tushare Pro 实时行情不可用 (可能是积分不足): {e}")
 
         # 降级：尝试旧版接口
         try:
