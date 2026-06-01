@@ -497,7 +497,7 @@ const MobileHomePage: React.FC = () => {
       {/* Scrollable content */}
       <div
         ref={dashboardScrollRef}
-        className={`flex-1 overflow-x-hidden px-3 py-3 ${sidebarOpen ? 'overflow-hidden' : 'overflow-y-auto touch-pan-y'}`}
+        className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 touch-pan-y"
       >
         {/* Input section */}
         <div className="mb-3 space-y-2.5">
