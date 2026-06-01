@@ -1,15 +1,18 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Check, SlidersHorizontal, X } from 'lucide-react';
+import { BarChart3, Check, SlidersHorizontal } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { analysisApi } from '../api/analysis';
 import { agentApi, type SkillInfo } from '../api/agent';
 import { systemConfigApi } from '../api/systemConfig';
-import { ApiErrorAlert, Button, EmptyState, InlineAlert } from '../components/common';
+import { ApiErrorAlert, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
 import { DashboardStateBlock } from '../components/dashboard';
 import { StockAutocomplete } from '../components/StockAutocomplete';
-import { ReportMarkdown, ReportSummary } from '../components/report';
+import { HistoryList, StockHistoryTrendDrawer } from '../components/history';
+import { ReportMarkdownDrawer } from '../components/report/ReportMarkdownDrawer';
+import { ReportSummary } from '../components/report';
+import { TaskPanel } from '../components/tasks';
 import { useDashboardLifecycle, useHomeDashboardState } from '../hooks';
 import type { SetupStatusResponse } from '../types/systemConfig';
 import { getReportText, normalizeReportLanguage } from '../utils/reportLanguage';
@@ -22,7 +25,6 @@ type MarketReviewNotice = {
 
 const MobileHomePage: React.FC = () => {
   const navigate = useNavigate();
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isSubmittingMarketReview, setIsSubmittingMarketReview] = useState(false);
   const [marketReviewNotice, setMarketReviewNotice] = useState<MarketReviewNotice>(null);
@@ -73,14 +75,25 @@ const MobileHomePage: React.FC = () => {
     hasMore,
     selectedReport,
     isLoadingReport,
+    isHistoryTrendOpen,
+    stockHistoryItems,
+    stockHistoryTotal,
+    stockHistoryHasMore,
+    isLoadingStockHistory,
+    isLoadingMoreStockHistory,
+    stockHistoryError,
+    stockHistoryFilters,
     activeTasks,
     markdownDrawerOpen,
+    selectedIds,
     setQuery,
     clearError,
     loadInitialHistory,
     refreshHistory,
     loadMoreHistory,
     selectHistoryItem,
+    toggleHistorySelection,
+    toggleSelectAllVisible,
     deleteSelectedHistory,
     submitAnalysis,
     notify,
@@ -92,6 +105,10 @@ const MobileHomePage: React.FC = () => {
     removeTask,
     openMarkdownDrawer,
     closeMarkdownDrawer,
+    openHistoryTrend,
+    closeHistoryTrend,
+    setStockHistoryRange,
+    loadMoreStockHistory,
   } = useHomeDashboardState();
 
   useEffect(() => {
@@ -142,6 +159,16 @@ const MobileHomePage: React.FC = () => {
   const reportLanguage = normalizeReportLanguage(selectedReport?.meta.reportLanguage);
   const reportText = getReportText(reportLanguage);
   const isMarketReviewHistoryReport = selectedReport?.meta.reportType === 'market_review';
+  const isHistoryTrendUnavailable = !selectedReport || selectedReport.meta.reportType === 'market_review'
+    || !selectedReport.meta.stockCode;
+
+  useEffect(() => {
+    if (!isHistoryTrendUnavailable || !isHistoryTrendOpen) {
+      return;
+    }
+    closeHistoryTrend();
+  }, [closeHistoryTrend, isHistoryTrendOpen, isHistoryTrendUnavailable]);
+
   const selectedStrategy = useMemo(
     () => analysisSkills.find((skill) => skill.id === selectedStrategyId),
     [analysisSkills, selectedStrategyId],
@@ -421,50 +448,49 @@ const MobileHomePage: React.FC = () => {
 
   const handleHistoryItemClick = useCallback((recordId: number) => {
     void selectHistoryItem(recordId);
-    setHistoryOpen(false);
   }, [selectHistoryItem]);
 
-  // Compact history item for mobile list
-  const HistoryItem = useCallback(({ item, selected }: { item: typeof historyItems[0]; selected: boolean }) => (
-    <button
-      type="button"
-      onClick={() => handleHistoryItemClick(item.id)}
-      className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition-colors ${
-        selected
-          ? 'border-primary/50 bg-primary/10'
-          : 'border-subtle bg-surface hover:bg-hover'
-      }`}
-    >
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-foreground">{item.stockName || item.stockCode}</span>
-          <span className="text-xs text-muted-text">{item.stockCode}</span>
-          {item.reportType === 'market_review' && (
-            <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">大盘</span>
-          )}
-        </div>
+  const sidebarContent = useMemo(
+    () => (
+      <div className="space-y-3">
+        <TaskPanel tasks={activeTasks} />
+        <HistoryList
+          items={historyItems}
+          isLoading={isLoadingHistory}
+          isLoadingMore={isLoadingMore}
+          hasMore={hasMore}
+          selectedId={selectedReport?.meta.id}
+          selectedIds={selectedIds}
+          isDeleting={isDeletingHistory}
+          onItemClick={handleHistoryItemClick}
+          onLoadMore={() => void loadMoreHistory()}
+          onToggleItemSelection={toggleHistorySelection}
+          onToggleSelectAll={toggleSelectAllVisible}
+          onDeleteSelected={() => setShowDeleteConfirm(true)}
+        />
       </div>
-      <span className="flex-shrink-0 text-[11px] text-muted-text">{item.createdAt || ''}</span>
-    </button>
-  ), [handleHistoryItemClick]);
+    ),
+    [
+      activeTasks,
+      hasMore,
+      historyItems,
+      isDeletingHistory,
+      isLoadingHistory,
+      isLoadingMore,
+      handleHistoryItemClick,
+      loadMoreHistory,
+      selectedIds,
+      selectedReport?.meta.id,
+      toggleHistorySelection,
+      toggleSelectAllVisible,
+    ],
+  );
 
   return (
     <div className="flex h-screen w-full flex-col bg-background">
       {/* Top bar */}
       <div className="flex items-center justify-between border-b border-subtle bg-elevated px-3 py-2.5">
         <h1 className="text-base font-bold text-foreground">每日个股分析</h1>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setHistoryOpen(true)}
-            className="flex h-10 min-w-[2.5rem] items-center justify-center rounded-xl border border-subtle bg-surface text-sm text-foreground active:bg-hover"
-            aria-label="历史记录"
-          >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </button>
-        </div>
       </div>
 
       {/* Scrollable content */}
@@ -583,61 +609,6 @@ const MobileHomePage: React.FC = () => {
               ) : '分析'}
             </button>
           </div>
-
-          {/* Active tasks */}
-          {activeTasks && activeTasks.length > 0 ? (() => {
-            const active = activeTasks.filter((t) => t.status === 'pending' || t.status === 'processing');
-            const processing = active.filter((t) => t.status === 'processing');
-            const pending = active.filter((t) => t.status === 'pending');
-            return (
-              <div className="mt-2 rounded-xl border border-subtle bg-surface overflow-hidden">
-                <div className="flex items-center justify-between border-b border-subtle px-3 py-2">
-                  <div className="flex items-center gap-2 text-xs text-secondary-text">
-                    <svg className="h-3.5 w-3.5 text-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    <span>分析任务</span>
-                    {processing.length > 0 && (
-                      <span className="flex items-center gap-1">
-                        <span className="h-1.5 w-1.5 rounded-full bg-cyan animate-pulse" />
-                        {processing.length} 进行中
-                      </span>
-                    )}
-                    {pending.length > 0 && (
-                      <span className="flex items-center gap-1">
-                        <span className="h-1.5 w-1.5 rounded-full bg-muted-text" />
-                        {pending.length} 等待中
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="max-h-48 overflow-y-auto divide-y divide-subtle">
-                  {active.map((task) => {
-                    const isProcessing = task.status === 'processing';
-                    const progress = Math.max(0, Math.min(100, task.progress || 0));
-                    return (
-                      <div key={task.taskId} className="flex items-center gap-3 px-3 py-2.5">
-                        <span className={`shrink-0 h-2 w-2 rounded-full ${isProcessing ? 'bg-cyan animate-pulse' : 'bg-muted-text'}`} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-foreground truncate">{task.stockName || task.stockCode}</span>
-                            <span className="text-xs text-muted-text">{task.stockCode}</span>
-                          </div>
-                          {task.message && (
-                            <p className="truncate text-xs text-secondary-text mt-0.5">{task.message}</p>
-                          )}
-                          <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-white/8">
-                            <div className="h-full rounded-full bg-cyan transition-[width] duration-300 ease-out" style={{ width: `${progress}%` }} />
-                          </div>
-                        </div>
-                        <span className="shrink-0 text-[11px] text-muted-text tabular-nums">{progress}%</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })() : null}
         </div>
 
         {/* Error / alerts */}
@@ -765,6 +736,22 @@ const MobileHomePage: React.FC = () => {
               <Button
                 variant="home-action-ai"
                 size="sm"
+                disabled={isAnalyzing || selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
+                className={isHistoryTrendOpen ? 'border-primary/70 bg-primary/15 text-primary shadow-glow-cyan' : undefined}
+                onClick={() => {
+                  if (isHistoryTrendOpen) {
+                    closeHistoryTrend();
+                    return;
+                  }
+                  void openHistoryTrend();
+                }}
+              >
+                <BarChart3 className="h-4 w-4" />
+                历史趋势
+              </Button>
+              <Button
+                variant="home-action-ai"
+                size="sm"
                 disabled={selectedReport.meta.id === undefined}
                 onClick={openMarkdownDrawer}
               >
@@ -774,13 +761,32 @@ const MobileHomePage: React.FC = () => {
                 {reportText.fullReport}
               </Button>
             </div>
-            <ReportSummary data={selectedReport} isHistory />
+            {isHistoryTrendOpen ? (
+              <StockHistoryTrendDrawer
+                key={`stock-history-${selectedReport.meta.id}`}
+                report={selectedReport}
+                items={stockHistoryItems}
+                total={stockHistoryTotal}
+                hasMore={stockHistoryHasMore}
+                isLoading={isLoadingStockHistory}
+                isLoadingMore={isLoadingMoreStockHistory}
+                error={stockHistoryError}
+                filters={stockHistoryFilters}
+                onClose={closeHistoryTrend}
+                onRangeChange={(range) => void setStockHistoryRange(range)}
+                onLoadMore={() => void loadMoreStockHistory()}
+                onSelectRecord={(recordId) => void selectHistoryItem(recordId)}
+                onRetry={() => void openHistoryTrend()}
+              />
+            ) : (
+              <ReportSummary data={selectedReport} isHistory />
+            )}
           </div>
         ) : (
-          <div className="flex min-h-[50vh] items-center justify-center">
+          <div className="flex min-h-[30vh] items-center justify-center">
             <EmptyState
               title="开始分析"
-              description="输入股票代码进行分析，或点击左上角查看历史报告。"
+              description="输入股票代码进行分析，或从下方历史记录中选择查看。"
               className="max-w-sm border-dashed"
               icon={(
                 <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -790,68 +796,17 @@ const MobileHomePage: React.FC = () => {
             />
           </div>
         )}
-      </div>
 
-      {/* History drawer */}
-      {historyOpen && (
-        <div className="fixed inset-0 z-50" onClick={() => setHistoryOpen(false)}>
-          <div className="page-drawer-overlay absolute inset-0" />
-          <div
-            className="absolute bottom-0 left-0 right-0 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-subtle bg-elevated"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-subtle bg-elevated px-4 py-3">
-              <h2 className="text-base font-semibold text-foreground">历史记录</h2>
-              <div className="flex items-center gap-2">
-                {selectedHistoryIds.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setShowDeleteConfirm(true)}
-                    className="rounded-lg px-2.5 py-1.5 text-xs text-danger active:bg-danger/10"
-                  >
-                    删除 ({selectedHistoryIds.length})
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setHistoryOpen(false)}
-                  className="rounded-lg p-1.5 text-secondary-text hover:bg-hover hover:text-foreground"
-                  aria-label="关闭"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
-            <div className="p-3">
-              {isLoadingHistory ? (
-                <div className="flex h-24 items-center justify-center text-sm text-muted-text">加载中...</div>
-              ) : historyItems.length === 0 ? (
-                <div className="flex h-24 items-center justify-center text-sm text-muted-text">暂无历史记录</div>
-              ) : (
-                <div className="space-y-2">
-                  {historyItems.map((item) => (
-                    <HistoryItem key={item.id} item={item} selected={selectedReport?.meta.id === item.id} />
-                  ))}
-                  {hasMore && (
-                    <button
-                      type="button"
-                      onClick={() => void loadMoreHistory()}
-                      disabled={isLoadingMore}
-                      className="flex w-full items-center justify-center gap-1 rounded-xl border border-subtle bg-surface py-3 text-sm text-foreground active:bg-hover disabled:opacity-60"
-                    >
-                      {isLoadingMore ? '加载中...' : '加载更多'}
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+        {/* History section - moved below report content */}
+        <div className="pb-4">
+          {sidebarContent}
         </div>
-      )}
+      </div>
 
       {/* Markdown drawer */}
       {markdownDrawerOpen && selectedReport?.meta.id && (
-        <ReportMarkdown
+        <ReportMarkdownDrawer
+          key={selectedReport.meta.id}
           recordId={selectedReport.meta.id}
           stockName={selectedReport.meta.stockName || ''}
           stockCode={selectedReport.meta.stockCode}
@@ -861,37 +816,20 @@ const MobileHomePage: React.FC = () => {
       )}
 
       {/* Delete confirm */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setShowDeleteConfirm(false)} />
-          <div className="relative w-full max-w-sm rounded-2xl border border-subtle bg-elevated p-5 shadow-2xl">
-            <h3 className="mb-2 text-base font-semibold text-foreground">删除历史记录</h3>
-            <p className="mb-4 text-sm text-secondary-text">
-              {selectedHistoryIds.length === 1
-                ? '确认删除这条历史记录吗？删除后将不可恢复。'
-                : `确认删除选中的 ${selectedHistoryIds.length} 条历史记录吗？删除后将不可恢复。`}
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={() => setShowDeleteConfirm(false)}
-                className="flex-1"
-              >
-                取消
-              </Button>
-              <Button
-                variant="danger"
-                size="md"
-                onClick={handleDeleteSelectedHistory}
-                className="flex-1"
-              >
-                {isDeletingHistory ? '删除中...' : '确认删除'}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        title="删除历史记录"
+        message={
+          selectedHistoryIds.length === 1
+            ? '确认删除这条历史记录吗？删除后将不可恢复。'
+            : `确认删除选中的 ${selectedHistoryIds.length} 条历史记录吗？删除后将不可恢复。`
+        }
+        confirmText={isDeletingHistory ? '删除中...' : '确认删除'}
+        cancelText="取消"
+        isDanger={true}
+        onConfirm={handleDeleteSelectedHistory}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 };
