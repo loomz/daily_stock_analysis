@@ -497,7 +497,7 @@ const MobileHomePage: React.FC = () => {
       {/* Scrollable content */}
       <div
         ref={dashboardScrollRef}
-        className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 touch-pan-y"
+        className={`flex-1 overflow-x-hidden px-3 py-3 ${sidebarOpen ? 'overflow-hidden' : 'overflow-y-auto touch-pan-y'}`}
       >
         {/* Input section */}
         <div className="mb-3 space-y-2.5">
@@ -813,7 +813,7 @@ const MobileHomePage: React.FC = () => {
         <div className="fixed inset-0 z-40" onClick={() => setSidebarOpen(false)}>
           <div className="page-drawer-overlay absolute inset-0" />
           <div
-            className="dashboard-card absolute bottom-0 left-0 top-0 flex w-72 flex-col overflow-hidden !rounded-none !rounded-r-xl p-3 shadow-2xl"
+            className="dashboard-card absolute bottom-0 left-0 top-0 flex w-72 flex-col overflow-y-auto !rounded-none !rounded-r-xl p-3 shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
             {sidebarContent}
