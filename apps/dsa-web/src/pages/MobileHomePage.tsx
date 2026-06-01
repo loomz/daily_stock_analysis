@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Check, SlidersHorizontal } from 'lucide-react';
+import { BarChart3, Check, Clock, SlidersHorizontal } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { analysisApi } from '../api/analysis';
@@ -25,6 +25,7 @@ type MarketReviewNotice = {
 
 const MobileHomePage: React.FC = () => {
   const navigate = useNavigate();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isSubmittingMarketReview, setIsSubmittingMarketReview] = useState(false);
   const [marketReviewNotice, setMarketReviewNotice] = useState<MarketReviewNotice>(null);
@@ -711,6 +712,14 @@ const MobileHomePage: React.FC = () => {
         ) : selectedReport ? (
           <div className="space-y-3 pb-4">
             <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                className="rounded-lg p-2 text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
+                aria-label="历史记录"
+              >
+                <Clock className="h-5 w-5" />
+              </button>
               <Button
                 variant="home-action-ai"
                 size="sm"
@@ -786,7 +795,7 @@ const MobileHomePage: React.FC = () => {
           <div className="flex min-h-[30vh] items-center justify-center">
             <EmptyState
               title="开始分析"
-              description="输入股票代码进行分析，或从下方历史记录中选择查看。"
+              description="输入股票代码进行分析，开始你的第一次分析吧。"
               className="max-w-sm border-dashed"
               icon={(
                 <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -797,11 +806,20 @@ const MobileHomePage: React.FC = () => {
           </div>
         )}
 
-        {/* History section - moved below report content */}
-        <div className="pb-4">
-          {sidebarContent}
-        </div>
       </div>
+
+      {/* History sidebar drawer */}
+      {sidebarOpen ? (
+        <div className="fixed inset-0 z-40" onClick={() => setSidebarOpen(false)}>
+          <div className="page-drawer-overlay absolute inset-0" />
+          <div
+            className="dashboard-card absolute bottom-0 left-0 top-0 flex w-72 flex-col overflow-hidden !rounded-none !rounded-r-xl p-3 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {sidebarContent}
+          </div>
+        </div>
+      ) : null}
 
       {/* Markdown drawer */}
       {markdownDrawerOpen && selectedReport?.meta.id && (
