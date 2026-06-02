@@ -448,6 +448,7 @@ const MobileHomePage: React.FC = () => {
   }, [deleteSelectedHistory]);
 
   const handleHistoryItemClick = useCallback((recordId: number) => {
+    setSidebarOpen(false);
     void selectHistoryItem(recordId);
   }, [selectHistoryItem]);
 
