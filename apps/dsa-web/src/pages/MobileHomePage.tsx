@@ -813,10 +813,25 @@ const MobileHomePage: React.FC = () => {
         <div className="fixed inset-0 z-40" onClick={() => setSidebarOpen(false)}>
           <div className="page-drawer-overlay absolute inset-0" />
           <div
-            className="dashboard-card absolute bottom-0 left-0 top-0 flex w-72 flex-col overflow-y-auto !rounded-none !rounded-r-xl p-3 shadow-2xl"
+            className="dashboard-card absolute bottom-0 left-0 top-0 flex w-72 flex-col !rounded-none !rounded-r-xl shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
-            {sidebarContent}
+            <div className="flex items-center justify-between p-3 pb-0">
+              <span className="text-sm font-semibold text-foreground">历史记录</span>
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                className="rounded-lg p-1 text-muted-text hover:bg-hover hover:text-foreground"
+                aria-label="关闭"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3">
+              {sidebarContent}
+            </div>
           </div>
         </div>
       ) : null}
