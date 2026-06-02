@@ -808,15 +808,15 @@ const MobileHomePage: React.FC = () => {
 
       </div>
 
-      {/* History sidebar drawer */}
+      {/* History bottom sheet */}
       {sidebarOpen ? (
-        <div className="fixed inset-0 z-40" onClick={() => setSidebarOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-end" onClick={() => setSidebarOpen(false)}>
           <div className="page-drawer-overlay absolute inset-0" />
           <div
-            className="dashboard-card absolute bottom-0 left-0 top-0 flex w-72 flex-col !rounded-none !rounded-r-xl shadow-2xl"
+            className="relative w-full max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-subtle bg-elevated shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center justify-between p-3 pb-0">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-subtle bg-elevated px-4 py-3">
               <span className="text-sm font-semibold text-foreground">历史记录</span>
               <button
                 type="button"
@@ -829,7 +829,7 @@ const MobileHomePage: React.FC = () => {
                 </svg>
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-3">
+            <div className="p-4">
               {sidebarContent}
             </div>
           </div>
