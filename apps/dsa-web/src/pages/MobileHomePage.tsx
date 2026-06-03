@@ -9,7 +9,7 @@ import { systemConfigApi } from '../api/systemConfig';
 import { ApiErrorAlert, Button, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
 import { DashboardStateBlock } from '../components/dashboard';
 import { StockAutocomplete } from '../components/StockAutocomplete';
-import { HistoryList, StockHistoryTrendDrawer } from '../components/history';
+import { StockHistoryTrendDrawer, HistoryListItem } from '../components/history';
 import { ReportMarkdownDrawer } from '../components/report/ReportMarkdownDrawer';
 import { ReportSummary } from '../components/report';
 import { TaskPanel } from '../components/tasks';
@@ -37,6 +37,7 @@ const MobileHomePage: React.FC = () => {
   const [strategyMenuOpen, setStrategyMenuOpen] = useState(false);
   const marketReviewPollTimer = useRef<number | null>(null);
   const dashboardScrollRef = useRef<HTMLDivElement | null>(null);
+  const bottomSheetScrollRef = useRef<HTMLDivElement | null>(null);
   const strategyMenuRef = useRef<HTMLDivElement | null>(null);
   const strategyButtonRef = useRef<HTMLButtonElement | null>(null);
   const strategyItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -94,7 +95,6 @@ const MobileHomePage: React.FC = () => {
     loadMoreHistory,
     selectHistoryItem,
     toggleHistorySelection,
-    toggleSelectAllVisible,
     deleteSelectedHistory,
     submitAnalysis,
     notify,
@@ -452,24 +452,74 @@ const MobileHomePage: React.FC = () => {
     void selectHistoryItem(recordId);
   }, [selectHistoryItem]);
 
+  // IntersectionObserver for load-more in the bottom sheet history list
+  const mobileLoadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const trigger = mobileLoadMoreTriggerRef.current;
+    const container = bottomSheetScrollRef.current;
+    if (!trigger || !container) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !isLoadingHistory && !isLoadingMore) {
+          void loadMoreHistory();
+        }
+      },
+      { root: container, rootMargin: '200px' },
+    );
+    observer.observe(trigger);
+    return () => observer.disconnect();
+  }, [hasMore, isLoadingHistory, isLoadingMore, loadMoreHistory]);
+
   const sidebarContent = useMemo(
     () => (
       <div className="space-y-3">
         <TaskPanel tasks={activeTasks} />
-        <HistoryList
-          items={historyItems}
-          isLoading={isLoadingHistory}
-          isLoadingMore={isLoadingMore}
-          hasMore={hasMore}
-          selectedId={selectedReport?.meta.id}
-          selectedIds={selectedIds}
-          isDeleting={isDeletingHistory}
-          onItemClick={handleHistoryItemClick}
-          onLoadMore={() => void loadMoreHistory()}
-          onToggleItemSelection={toggleHistorySelection}
-          onToggleSelectAll={toggleSelectAllVisible}
-          onDeleteSelected={() => setShowDeleteConfirm(true)}
-        />
+
+        {/* Mobile history list — rendered inline to avoid double scroll */}
+        <div>
+          {isLoadingHistory ? (
+            <DashboardStateBlock loading compact title="加载历史记录中..." />
+          ) : historyItems.length === 0 ? (
+            <DashboardStateBlock
+              title="暂无历史分析记录"
+              description="完成首次分析后，这里会保留最近结果。"
+              icon={(
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              )}
+            />
+          ) : (
+            <div className="space-y-2">
+              {historyItems.map((item) => (
+                <HistoryListItem
+                  key={item.id}
+                  item={item}
+                  isViewing={selectedReport?.meta.id === item.id}
+                  isChecked={selectedIds.has(item.id)}
+                  isDeleting={isDeletingHistory}
+                  onToggleChecked={toggleHistorySelection}
+                  onClick={handleHistoryItemClick}
+                />
+              ))}
+
+              <div ref={mobileLoadMoreTriggerRef} className="h-4" />
+
+              {isLoadingMore && (
+                <div className="flex justify-center py-4">
+                  <div className="home-spinner h-5 w-5 animate-spin border-2" />
+                </div>
+              )}
+
+              {!hasMore && historyItems.length > 0 && (
+                <div className="text-center py-5">
+                  <div className="h-px bg-subtle w-full mb-3" />
+                  <span className="text-[10px] text-secondary-text uppercase tracking-[0.2em]">已到底部</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     ),
     [
@@ -480,11 +530,9 @@ const MobileHomePage: React.FC = () => {
       isLoadingHistory,
       isLoadingMore,
       handleHistoryItemClick,
-      loadMoreHistory,
       selectedIds,
       selectedReport?.meta.id,
       toggleHistorySelection,
-      toggleSelectAllVisible,
     ],
   );
 
@@ -814,6 +862,7 @@ const MobileHomePage: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-end" onClick={() => setSidebarOpen(false)}>
           <div className="page-drawer-overlay absolute inset-0" />
           <div
+            ref={bottomSheetScrollRef}
             className="relative w-full max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-subtle bg-elevated shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
