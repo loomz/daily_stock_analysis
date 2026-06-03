@@ -370,6 +370,28 @@ class EastmoneyChipFetcher(BaseFetcher):
         options.add_argument(f'--user-agent={user_agent}')
         options.add_argument('--lang=zh-CN,zh;q=0.9')
 
+        # --- 资源限制：2C2G 低配服务器优化（不影响反检测） ---
+        options.add_argument('--disable-extensions')
+        options.add_argument('--disable-background-networking')
+        options.add_argument('--disable-sync')
+        options.add_argument('--disable-translate')
+        options.add_argument('--metrics-recording-only')
+        options.add_argument('--no-first-run')
+        options.add_argument('--password-store=basic')
+        options.add_argument('--use-mock-keychain')
+        options.add_argument('--disable-component-update')
+        options.add_argument('--disable-hang-monitor')
+        options.add_argument('--hide-scrollbars')
+        options.add_argument('--mute-audio')
+        options.add_argument('--disable-renderer-backgrounding')
+        options.add_argument('--disable-backgrounding-occluded-windows')
+        options.add_argument('--disable-background-timer-throttling')
+        options.add_argument('--memory-pressure-off')
+        options.add_argument(
+            '--disable-features=TranslateUI,OptimizerGuideOnProcessStart,'
+            'PrivacySandboxSettings4,MediaRouter,InterestFeedContentSuggestions'
+        )
+
         chrome_path = _find_chrome_binary()
         if chrome_path:
             options.binary_location = chrome_path
