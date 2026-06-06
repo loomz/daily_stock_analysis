@@ -120,6 +120,18 @@ def _find_chromedriver_path() -> Optional[str]:
     return None
 
 
+def _get_remote_url() -> Optional[str]:
+    """Get remote WebDriver URL from WEBDRIVER_REMOTE_URL env var.
+
+    Returns the URL if configured (e.g. 'http://localhost:4444/wd/hub'),
+    or None to use local WebDriver.
+    """
+    url = (os.getenv("WEBDRIVER_REMOTE_URL") or "").strip()
+    if url:
+        return url
+    return None
+
+
 class EastmoneyChipFetcher(BaseFetcher):
     """
     东方财富筹码分布数据 Selenium 爬取器
@@ -153,6 +165,7 @@ class EastmoneyChipFetcher(BaseFetcher):
         self._driver = None
         self._last_request_time = 0.0
         self._min_interval = 4.0
+        self._remote_url = _get_remote_url()
         if EastmoneyChipFetcher._selenium_available:
             try:
                 from selenium import webdriver as _webdriver  # noqa: F401
@@ -165,7 +178,12 @@ class EastmoneyChipFetcher(BaseFetcher):
                 )
                 return
 
-            if not _is_chrome_installed():
+            # 使用远程 WebDriver 时不需要本地 Chrome
+            if self._remote_url:
+                logger.info(
+                    f"[EastmoneyChipFetcher] 配置了远程 WebDriver: {self._remote_url}"
+                )
+            elif not _is_chrome_installed():
                 EastmoneyChipFetcher._selenium_available = False
                 logger.warning(
                     "[EastmoneyChipFetcher] Chrome/Chromium 浏览器未安装，"
@@ -199,12 +217,31 @@ class EastmoneyChipFetcher(BaseFetcher):
         """获取或创建浏览器驱动实例
 
         优先级：
-        1. undetected-chromedriver（深度反检测，适合云环境）
-        2. 普通 Selenium + CDP 反检测（本地可用）
+        1. 远程 WebDriver（配置 WEBDRIVER_REMOTE_URL 时启用）
+        2. undetected-chromedriver（深度反检测，适合云环境）
+        3. 普通 Selenium + CDP 反检测（本地可用）
         """
         if self._driver is None:
             user_agent = random.choice(_USER_AGENTS)
             driver = None
+
+            # 如果配置了远程 WebDriver，优先使用
+            if self._remote_url:
+                try:
+                    from selenium import webdriver as _wd
+
+                    opts = self._build_chrome_options(user_agent, for_remote=True)
+                    driver = _wd.Remote(command_executor=self._remote_url, options=opts)
+                    driver.set_page_load_timeout(20)
+                    logger.info(
+                        f"[EastmoneyChipFetcher] 使用远程 WebDriver: {self._remote_url}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[EastmoneyChipFetcher] 远程 WebDriver 连接失败 ({e}), "
+                        "回退到本地驱动"
+                    )
+                    driver = None
 
             # 尝试 undetected-chromedriver（深度修补 ChromeDriver 绕过检测）
             # uc.Chrome 初始化可能很慢（下载/修补 driver），用线程 + 超时保护
@@ -357,12 +394,19 @@ class EastmoneyChipFetcher(BaseFetcher):
         return self._driver
 
     @staticmethod
-    def _build_chrome_options(user_agent: str):
-        """构建 Chrome Options 对象"""
+    def _build_chrome_options(user_agent: str, for_remote: bool = False):
+        """构建 Chrome Options 对象
+
+        Args:
+            user_agent: 浏览器 User-Agent
+            for_remote: 是否用于远程 WebDriver。远程模式不设置 binary_location
+                且移除 headless（由远程 Node 控制）
+        """
         from selenium.webdriver.chrome.options import Options
 
         options = Options()
-        options.add_argument('--headless=new')
+        if not for_remote:
+            options.add_argument('--headless=new')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-blink-features=AutomationControlled')
@@ -392,9 +436,11 @@ class EastmoneyChipFetcher(BaseFetcher):
             'PrivacySandboxSettings4,MediaRouter,InterestFeedContentSuggestions'
         )
 
-        chrome_path = _find_chrome_binary()
-        if chrome_path:
-            options.binary_location = chrome_path
+        # 远程模式由 Node 管理浏览器，不设置 binary_location
+        if not for_remote:
+            chrome_path = _find_chrome_binary()
+            if chrome_path:
+                options.binary_location = chrome_path
         return options
 
     def _close_driver(self):
