@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Check, Clock, SlidersHorizontal } from 'lucide-react';
+import { BarChart3, Check, Clock, SlidersHorizontal, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { analysisApi } from '../api/analysis';
@@ -9,12 +9,15 @@ import { systemConfigApi } from '../api/systemConfig';
 import { ApiErrorAlert, Button, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
 import { DashboardStateBlock } from '../components/dashboard';
 import { StockAutocomplete } from '../components/StockAutocomplete';
-import { StockHistoryTrendDrawer, HistoryListItem } from '../components/history';
+import { StockHistoryTrendDrawer } from '../components/history';
 import { ReportMarkdownDrawer } from '../components/report/ReportMarkdownDrawer';
 import { ReportSummary } from '../components/report';
 import { TaskPanel } from '../components/tasks';
 import { useDashboardLifecycle, useHomeDashboardState } from '../hooks';
+import type { HistoryItem, TaskInfo } from '../types/analysis';
 import type { SetupStatusResponse } from '../types/systemConfig';
+import { getSentimentColor } from '../types/analysis';
+import { formatDateTime } from '../utils/format';
 import { getReportText, normalizeReportLanguage } from '../utils/reportLanguage';
 
 type MarketReviewNotice = {
@@ -22,6 +25,212 @@ type MarketReviewNotice = {
   title: string;
   message: string;
 } | null;
+
+// ─── Simple history item row ────────────────────────────────────────────────
+
+function MobileHistoryRow({
+  item,
+  isViewing,
+  onClick,
+}: {
+  item: HistoryItem;
+  isViewing: boolean;
+  onClick: (id: number) => void;
+}) {
+  const sentimentColor =
+    item.sentimentScore !== undefined ? getSentimentColor(item.sentimentScore) : null;
+  const stockName = item.stockName || item.stockCode;
+
+  const adviceLabel = (() => {
+    const n = item.operationAdvice?.trim();
+    if (!n) return '';
+    if (n.includes('减仓')) return '减仓';
+    if (n.includes('卖')) return '卖出';
+    if (n.includes('观望') || n.includes('等待')) return '观望';
+    if (n.includes('买') || n.includes('布局')) return '买入';
+    return n.split(/[，。；、\s]/)[0] || '';
+  })();
+
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(item.id)}
+      className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-3 text-left transition-colors ${
+        isViewing
+          ? 'bg-primary/10 ring-1 ring-primary/30'
+          : 'hover:bg-active active:bg-active'
+      }`}
+    >
+      {/* Sentiment color bar */}
+      {sentimentColor && (
+        <div
+          className="h-8 w-1 rounded-full flex-shrink-0"
+          style={{ backgroundColor: sentimentColor }}
+        />
+      )}
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate text-sm font-semibold text-foreground">
+            {stockName}
+          </span>
+          {sentimentColor && (
+            <span
+              className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold"
+              style={{
+                color: sentimentColor,
+                backgroundColor: `${sentimentColor}15`,
+              }}
+            >
+              {adviceLabel && `${adviceLabel} `}{item.sentimentScore}
+            </span>
+          )}
+        </div>
+        <div className="mt-0.5 flex items-center gap-1.5">
+          <span className="text-[11px] font-mono text-muted-text">
+            {item.stockCode}
+          </span>
+          <span className="text-[11px] text-muted-text">·</span>
+          <span className="text-[11px] text-muted-text">
+            {formatDateTime(item.createdAt)}
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// ─── History bottom sheet ───────────────────────────────────────────────────
+
+function HistoryBottomSheet({
+  open,
+  onClose,
+  historyItems,
+  isLoadingHistory,
+  isLoadingMore,
+  hasMore,
+  selectedReportId,
+  activeTasks,
+  onLoadMore,
+  onItemClick,
+}: {
+  open: boolean;
+  onClose: () => void;
+  historyItems: HistoryItem[];
+  isLoadingHistory: boolean;
+  isLoadingMore: boolean;
+  hasMore: boolean;
+  selectedReportId?: number;
+  activeTasks: TaskInfo[];
+  onLoadMore: () => void;
+  onItemClick: (id: number) => void;
+}) {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+
+  // Simple scroll-based load more
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+
+    const handler = () => {
+      const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (dist < 400 && hasMore && !isLoadingMore && !isLoadingHistory) {
+        onLoadMore();
+      }
+    };
+
+    el.addEventListener('scroll', handler, { passive: true });
+    return () => el.removeEventListener('scroll', handler);
+  }, [hasMore, isLoadingMore, isLoadingHistory, onLoadMore]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex flex-col items-center justify-end"
+      onClick={onClose}
+    >
+      {/* Overlay */}
+      <div className="absolute inset-0 bg-black/40" />
+
+      {/* Sheet */}
+      <div
+        className="relative w-full max-h-[80vh] flex flex-col rounded-t-2xl border-t border-subtle bg-elevated shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-subtle px-4 py-3">
+          <span className="text-sm font-semibold text-foreground">历史记录</span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-muted-text hover:bg-hover hover:text-foreground"
+            aria-label="关闭"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Scrollable content */}
+        <div
+          ref={contentRef}
+          className="flex-1 overflow-y-auto overscroll-contain px-4 py-3"
+          style={{ minHeight: 0 }}
+        >
+          {/* Tasks */}
+          {activeTasks.length > 0 && (
+            <div className="mb-3">
+              <TaskPanel tasks={activeTasks} />
+            </div>
+          )}
+
+          {/* Loading / Empty */}
+          {isLoadingHistory ? (
+            <DashboardStateBlock loading compact title="加载历史记录中..." />
+          ) : historyItems.length === 0 ? (
+            <div className="py-10 text-center">
+              <p className="text-sm text-muted-text">暂无历史分析记录</p>
+              <p className="mt-1 text-xs text-muted-text">
+                完成首次分析后，这里会保留最近结果。
+              </p>
+            </div>
+          ) : (
+            /* History list */
+            <div className="space-y-2">
+              {historyItems.map((item) => (
+                <MobileHistoryRow
+                  key={item.id}
+                  item={item}
+                  isViewing={selectedReportId === item.id}
+                  onClick={onItemClick}
+                />
+              ))}
+
+              {/* Loading more */}
+              {isLoadingMore && (
+                <div className="flex justify-center py-4">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-subtle border-t-primary" />
+                </div>
+              )}
+
+              {/* End marker */}
+              {!hasMore && (
+                <div className="py-4 text-center">
+                  <div className="mx-auto h-px w-16 bg-subtle" />
+                  <p className="mt-2 text-[10px] text-muted-text uppercase tracking-widest">
+                    已到底部
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main page ──────────────────────────────────────────────────────────────
 
 const MobileHomePage: React.FC = () => {
   const navigate = useNavigate();
@@ -35,9 +244,9 @@ const MobileHomePage: React.FC = () => {
   const [analysisSkills, setAnalysisSkills] = useState<SkillInfo[]>([]);
   const [selectedStrategyId, setSelectedStrategyId] = useState('');
   const [strategyMenuOpen, setStrategyMenuOpen] = useState(false);
+
   const marketReviewPollTimer = useRef<number | null>(null);
   const dashboardScrollRef = useRef<HTMLDivElement | null>(null);
-  const bottomSheetScrollRef = useRef<HTMLDivElement | null>(null);
   const strategyMenuRef = useRef<HTMLDivElement | null>(null);
   const strategyButtonRef = useRef<HTMLButtonElement | null>(null);
   const strategyItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -61,6 +270,7 @@ const MobileHomePage: React.FC = () => {
   }, []);
 
   useEffect(() => stopMarketReviewPolling, [stopMarketReviewPolling]);
+
   const [setupStatus, setSetupStatus] = useState<SetupStatusResponse | null>(null);
 
   const {
@@ -70,7 +280,6 @@ const MobileHomePage: React.FC = () => {
     error,
     isAnalyzing,
     historyItems,
-    selectedHistoryIds,
     isDeletingHistory,
     isLoadingHistory,
     isLoadingMore,
@@ -87,15 +296,12 @@ const MobileHomePage: React.FC = () => {
     stockHistoryFilters,
     activeTasks,
     markdownDrawerOpen,
-    selectedIds,
     setQuery,
     clearError,
     loadInitialHistory,
     refreshHistory,
     loadMoreHistory,
     selectHistoryItem,
-    toggleHistorySelection,
-    deleteSelectedHistory,
     submitAnalysis,
     notify,
     setNotify,
@@ -152,7 +358,7 @@ const MobileHomePage: React.FC = () => {
   }, [strategyMenuOpen]);
 
   useEffect(() => {
-    if (selectedStrategyId && !analysisSkills.some((skill) => skill.id === selectedStrategyId)) {
+    if (selectedStrategyId && !analysisSkills.some((s) => s.id === selectedStrategyId)) {
       setSelectedStrategyId('');
     }
   }, [analysisSkills, selectedStrategyId]);
@@ -160,18 +366,15 @@ const MobileHomePage: React.FC = () => {
   const reportLanguage = normalizeReportLanguage(selectedReport?.meta.reportLanguage);
   const reportText = getReportText(reportLanguage);
   const isMarketReviewHistoryReport = selectedReport?.meta.reportType === 'market_review';
-  const isHistoryTrendUnavailable = !selectedReport || selectedReport.meta.reportType === 'market_review'
-    || !selectedReport.meta.stockCode;
+  const isHistoryTrendUnavailable = !selectedReport || isMarketReviewHistoryReport || !selectedReport.meta.stockCode;
 
   useEffect(() => {
-    if (!isHistoryTrendUnavailable || !isHistoryTrendOpen) {
-      return;
-    }
+    if (!isHistoryTrendUnavailable || !isHistoryTrendOpen) return;
     closeHistoryTrend();
   }, [closeHistoryTrend, isHistoryTrendOpen, isHistoryTrendUnavailable]);
 
   const selectedStrategy = useMemo(
-    () => analysisSkills.find((skill) => skill.id === selectedStrategyId),
+    () => analysisSkills.find((s) => s.id === selectedStrategyId),
     [analysisSkills, selectedStrategyId],
   );
   const selectedAnalysisSkills = useMemo(
@@ -181,35 +384,34 @@ const MobileHomePage: React.FC = () => {
   const strategyOptions = useMemo(
     () => [
       { id: '', name: '默认策略', description: '沿用系统默认分析框架' },
-      ...analysisSkills.map((skill) => ({
-        id: skill.id,
-        name: skill.name,
-        description: skill.description,
-      })),
+      ...analysisSkills.map((s) => ({ id: s.id, name: s.name, description: s.description })),
     ],
     [analysisSkills],
   );
+
   const closeStrategyMenu = useCallback((restoreFocus = false) => {
     setStrategyMenuOpen(false);
     if (restoreFocus) strategyButtonRef.current?.focus();
   }, []);
-  const selectStrategy = useCallback((strategyId: string) => {
-    setSelectedStrategyId(strategyId);
+  const selectStrategy = useCallback((id: string) => {
+    setSelectedStrategyId(id);
     setStrategyMenuOpen(false);
   }, []);
   const focusStrategyItem = useCallback((index: number) => {
-    const itemCount = strategyOptions.length;
-    if (itemCount === 0) return;
-    const nextIndex = (index + itemCount) % itemCount;
-    strategyItemRefs.current[nextIndex]?.focus();
+    const count = strategyOptions.length;
+    if (count === 0) return;
+    const next = (index + count) % count;
+    strategyItemRefs.current[next]?.focus();
   }, [strategyOptions.length]);
   const getSelectedStrategyIndex = useCallback(() => {
-    const selectedIndex = strategyOptions.findIndex((option) => option.id === selectedStrategyId);
-    return selectedIndex >= 0 ? selectedIndex : 0;
+    const i = strategyOptions.findIndex((o) => o.id === selectedStrategyId);
+    return i >= 0 ? i : 0;
   }, [selectedStrategyId, strategyOptions]);
+
   useEffect(() => {
     strategyItemRefs.current = strategyItemRefs.current.slice(0, strategyOptions.length);
   }, [strategyOptions.length]);
+
   useEffect(() => {
     if (!strategyMenuOpen) return undefined;
     const targetIndex = strategyInitialFocusIndexRef.current ?? getSelectedStrategyIndex();
@@ -217,55 +419,62 @@ const MobileHomePage: React.FC = () => {
     const timeout = window.setTimeout(() => focusStrategyItem(targetIndex), 0);
     return () => window.clearTimeout(timeout);
   }, [focusStrategyItem, getSelectedStrategyIndex, strategyMenuOpen]);
-  const handleStrategyButtonKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-    event.preventDefault();
-    const targetIndex = event.key === 'ArrowUp' ? strategyOptions.length - 1 : 0;
-    if (strategyMenuOpen) {
-      focusStrategyItem(targetIndex);
-      return;
-    }
-    strategyInitialFocusIndexRef.current = targetIndex;
-    setStrategyMenuOpen(true);
-  }, [focusStrategyItem, strategyMenuOpen, strategyOptions.length]);
-  const handleStrategyMenuKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    const itemCount = strategyOptions.length;
-    if (itemCount === 0) return;
-    const currentIndex = strategyItemRefs.current.findIndex((item) => item === document.activeElement);
-    switch (event.key) {
-      case 'Escape':
-        event.preventDefault();
-        closeStrategyMenu(true);
-        break;
-      case 'ArrowDown':
-        event.preventDefault();
-        focusStrategyItem(currentIndex >= 0 ? currentIndex + 1 : 0);
-        break;
-      case 'ArrowUp':
-        event.preventDefault();
-        focusStrategyItem(currentIndex >= 0 ? currentIndex - 1 : itemCount - 1);
-        break;
-      case 'Home':
-        event.preventDefault();
-        focusStrategyItem(0);
-        break;
-      case 'End':
-        event.preventDefault();
-        focusStrategyItem(itemCount - 1);
-        break;
-      case 'Tab':
-        setStrategyMenuOpen(false);
-        break;
-      default:
-        break;
-    }
-  }, [closeStrategyMenu, focusStrategyItem, strategyOptions.length]);
+
+  const handleStrategyButtonKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      const targetIndex = event.key === 'ArrowUp' ? strategyOptions.length - 1 : 0;
+      if (strategyMenuOpen) {
+        focusStrategyItem(targetIndex);
+        return;
+      }
+      strategyInitialFocusIndexRef.current = targetIndex;
+      setStrategyMenuOpen(true);
+    },
+    [focusStrategyItem, strategyMenuOpen, strategyOptions.length],
+  );
+
+  const handleStrategyMenuKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const count = strategyOptions.length;
+      if (count === 0) return;
+      const current = strategyItemRefs.current.findIndex((el) => el === document.activeElement);
+      switch (event.key) {
+        case 'Escape':
+          event.preventDefault();
+          closeStrategyMenu(true);
+          break;
+        case 'ArrowDown':
+          event.preventDefault();
+          focusStrategyItem(current >= 0 ? current + 1 : 0);
+          break;
+        case 'ArrowUp':
+          event.preventDefault();
+          focusStrategyItem(current >= 0 ? current - 1 : count - 1);
+          break;
+        case 'Home':
+          event.preventDefault();
+          focusStrategyItem(0);
+          break;
+        case 'End':
+          event.preventDefault();
+          focusStrategyItem(count - 1);
+          break;
+        case 'Tab':
+          setStrategyMenuOpen(false);
+          break;
+      }
+    },
+    [closeStrategyMenu, focusStrategyItem, strategyOptions.length],
+  );
+
   const setupNeedsAction = setupStatus ? !setupStatus.isComplete : false;
   const setupMissingLabels = useMemo(() => {
     if (!setupStatus) return '';
     return setupStatus.checks
-      .filter((check) => check.required && check.status === 'needs_action')
-      .map((check) => check.title)
+      .filter((c) => c.required && c.status === 'needs_action')
+      .map((c) => c.title)
       .slice(0, 3)
       .join('、');
   }, [setupStatus]);
@@ -294,15 +503,15 @@ const MobileHomePage: React.FC = () => {
   );
 
   const handleAskFollowUp = useCallback(() => {
-    if (selectedReport?.meta.id === undefined || selectedReport.meta.reportType === 'market_review') return;
+    if (selectedReport?.meta.id === undefined || isMarketReviewHistoryReport) return;
     const code = selectedReport.meta.stockCode;
     const name = selectedReport.meta.stockName;
     const rid = selectedReport.meta.id;
     navigate(`/chat?stock=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}&recordId=${rid}`);
-  }, [navigate, selectedReport]);
+  }, [navigate, selectedReport, isMarketReviewHistoryReport]);
 
   const handleReanalyze = useCallback(() => {
-    if (!selectedReport || selectedReport.meta.reportType === 'market_review') return;
+    if (!selectedReport || isMarketReviewHistoryReport) return;
     void submitAnalysis({
       stockCode: selectedReport.meta.stockCode,
       stockName: selectedReport.meta.stockName,
@@ -311,7 +520,9 @@ const MobileHomePage: React.FC = () => {
       forceRefresh: true,
       skills: selectedAnalysisSkills,
     });
-  }, [selectedAnalysisSkills, selectedReport, submitAnalysis]);
+  }, [selectedAnalysisSkills, selectedReport, isMarketReviewHistoryReport, submitAnalysis]);
+
+  // ── Market review polling ────────────────────────────────────────────────
 
   const pollMarketReviewStatus = useCallback(
     async (taskId: string) => {
@@ -346,14 +557,14 @@ const MobileHomePage: React.FC = () => {
           }
           if (status.status === 'completed') {
             stopMarketReviewPolling();
-            const marketReviewText = typeof status.marketReviewReport === 'string'
-              ? status.marketReviewReport
-              : '';
-            setMarketReviewReport(marketReviewText ? marketReviewText.trim() : null);
+            const text = typeof status.marketReviewReport === 'string' ? status.marketReviewReport : '';
+            setMarketReviewReport(text ? text.trim() : null);
             setMarketReviewNotice({
               variant: 'success',
               title: '大盘复盘已完成',
-              message: marketReviewText ? '大盘复盘任务已完成，结果如下：' : '大盘复盘任务已完成，结果已生成并按配置推送。',
+              message: text
+                ? '大盘复盘任务已完成，结果如下：'
+                : '大盘复盘任务已完成，结果已生成并按配置推送。',
             });
             setMarketReviewError(null);
             scrollMarketReviewFeedbackIntoView();
@@ -442,113 +653,32 @@ const MobileHomePage: React.FC = () => {
     );
   }, [marketReviewReport]);
 
-  const handleDeleteSelectedHistory = useCallback(() => {
-    void deleteSelectedHistory();
-    setShowDeleteConfirm(false);
-  }, [deleteSelectedHistory]);
+  // ── History item click (closes sheet + selects) ──────────────────────────
 
-  const handleHistoryItemClick = useCallback((recordId: number) => {
-    setSidebarOpen(false);
-    void selectHistoryItem(recordId);
-  }, [selectHistoryItem]);
-
-  // IntersectionObserver for load-more in the bottom sheet history list
-  const mobileLoadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const trigger = mobileLoadMoreTriggerRef.current;
-    const container = bottomSheetScrollRef.current;
-    if (!trigger || !container) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasMore && !isLoadingHistory && !isLoadingMore) {
-          void loadMoreHistory();
-        }
-      },
-      { root: container, rootMargin: '200px' },
-    );
-    observer.observe(trigger);
-    return () => observer.disconnect();
-  }, [hasMore, isLoadingHistory, isLoadingMore, loadMoreHistory]);
-
-  const sidebarContent = useMemo(
-    () => (
-      <div className="space-y-3">
-        <TaskPanel tasks={activeTasks} />
-
-        {/* Mobile history list — rendered inline to avoid double scroll */}
-        <div>
-          {isLoadingHistory ? (
-            <DashboardStateBlock loading compact title="加载历史记录中..." />
-          ) : historyItems.length === 0 ? (
-            <DashboardStateBlock
-              title="暂无历史分析记录"
-              description="完成首次分析后，这里会保留最近结果。"
-              icon={(
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              )}
-            />
-          ) : (
-            <div className="space-y-2">
-              {historyItems.map((item) => (
-                <HistoryListItem
-                  key={item.id}
-                  item={item}
-                  isViewing={selectedReport?.meta.id === item.id}
-                  isChecked={selectedIds.has(item.id)}
-                  isDeleting={isDeletingHistory}
-                  onToggleChecked={toggleHistorySelection}
-                  onClick={handleHistoryItemClick}
-                />
-              ))}
-
-              <div ref={mobileLoadMoreTriggerRef} className="h-4" />
-
-              {isLoadingMore && (
-                <div className="flex justify-center py-4">
-                  <div className="home-spinner h-5 w-5 animate-spin border-2" />
-                </div>
-              )}
-
-              {!hasMore && historyItems.length > 0 && (
-                <div className="text-center py-5">
-                  <div className="h-px bg-subtle w-full mb-3" />
-                  <span className="text-[10px] text-secondary-text uppercase tracking-[0.2em]">已到底部</span>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    ),
-    [
-      activeTasks,
-      hasMore,
-      historyItems,
-      isDeletingHistory,
-      isLoadingHistory,
-      isLoadingMore,
-      handleHistoryItemClick,
-      selectedIds,
-      selectedReport?.meta.id,
-      toggleHistorySelection,
-    ],
+  const handleHistoryItemClick = useCallback(
+    (recordId: number) => {
+      setSidebarOpen(false);
+      void selectHistoryItem(recordId);
+    },
+    [selectHistoryItem],
   );
+
+  // ── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="flex h-screen w-full flex-col bg-background">
-      {/* Top bar */}
+      {/* ── Top bar ─────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between border-b border-subtle bg-elevated px-3 py-2.5">
         <h1 className="text-base font-bold text-foreground">每日个股分析</h1>
       </div>
 
-      {/* Scrollable content */}
+      {/* ── Scrollable main content ─────────────────────────────────────── */}
       <div
         ref={dashboardScrollRef}
         className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 touch-pan-y"
+        style={{ minHeight: 0 }}
       >
-        {/* Input section */}
+        {/* ── Input section ────────────────────────────────────────────── */}
         <div className="mb-3 space-y-2.5">
           <StockAutocomplete
             value={query}
@@ -561,7 +691,7 @@ const MobileHomePage: React.FC = () => {
             className={inputError ? 'border-danger/50' : undefined}
           />
 
-          {/* Strategy + buttons row */}
+          {/* Strategy + notify row */}
           <div className="flex items-center gap-2">
             {analysisSkills.length > 0 ? (
               <div ref={strategyMenuRef} className="relative flex-1">
@@ -571,13 +701,12 @@ const MobileHomePage: React.FC = () => {
                   type="button"
                   aria-haspopup="menu"
                   aria-expanded={strategyMenuOpen}
-                  aria-controls={strategyMenuOpen ? 'mobile-strategy-menu' : undefined}
-                  onClick={() => setStrategyMenuOpen((open) => !open)}
+                  onClick={() => setStrategyMenuOpen((o) => !o)}
                   onKeyDown={handleStrategyButtonKeyDown}
                   disabled={isAnalyzing}
                   className="flex h-11 w-full items-center gap-1.5 rounded-xl border border-subtle bg-surface px-3 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <SlidersHorizontal className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                  <SlidersHorizontal className="h-4 w-4 flex-shrink-0" />
                   <span className="truncate">{selectedStrategy?.name || '策略'}</span>
                 </button>
                 {strategyMenuOpen ? (
@@ -588,27 +717,30 @@ const MobileHomePage: React.FC = () => {
                     onKeyDown={handleStrategyMenuKeyDown}
                     className="absolute left-0 right-0 top-full z-[120] mt-1 max-h-72 overflow-y-auto rounded-xl border border-subtle bg-elevated p-1 shadow-2xl"
                   >
-                    {strategyOptions.map((option, index) => {
-                      const selected = selectedStrategyId === option.id;
-                      return (
-                        <button
-                          key={option.id || 'default'}
-                          ref={(node) => { strategyItemRefs.current[index] = node; }}
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={selected}
-                          tabIndex={-1}
-                          onClick={() => selectStrategy(option.id)}
-                          className="flex w-full items-start gap-2.5 rounded-lg px-3 py-3 text-left transition-colors hover:bg-hover"
-                        >
-                          <Check className={`mt-0.5 h-4 w-4 flex-shrink-0 ${selected ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" />
-                          <span className="min-w-0">
-                            <span className="block font-medium">{option.name}</span>
-                            <span className="mt-0.5 line-clamp-2 block text-xs leading-5 text-muted-text">{option.description}</span>
+                    {strategyOptions.map((option, index) => (
+                      <button
+                        key={option.id || 'default'}
+                        ref={(node) => { strategyItemRefs.current[index] = node; }}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={selectedStrategyId === option.id}
+                        tabIndex={-1}
+                        onClick={() => selectStrategy(option.id)}
+                        className="flex w-full items-start gap-2.5 rounded-lg px-3 py-3 text-left transition-colors hover:bg-hover"
+                      >
+                        <Check
+                          className={`mt-0.5 h-4 w-4 flex-shrink-0 ${
+                            selectedStrategyId === option.id ? 'opacity-100' : 'opacity-0'
+                          }`}
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-medium">{option.name}</span>
+                          <span className="mt-0.5 line-clamp-2 block text-xs leading-5 text-muted-text">
+                            {option.description}
                           </span>
-                        </button>
-                      );
-                    })}
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 ) : null}
               </div>
@@ -639,7 +771,7 @@ const MobileHomePage: React.FC = () => {
               onClick={() => void handleTriggerMarketReview()}
               className="flex h-11 flex-1 items-center justify-center gap-1.5 whitespace-nowrap"
             >
-              <BarChart3 className="h-4 w-4" aria-hidden="true" />
+              <BarChart3 className="h-4 w-4" />
               大盘复盘
             </Button>
             <button
@@ -656,74 +788,61 @@ const MobileHomePage: React.FC = () => {
                   </svg>
                   分析中
                 </>
-              ) : '分析'}
+              ) : (
+                '分析'
+              )}
             </button>
           </div>
         </div>
 
-        {/* Error / alerts */}
-        {inputError || duplicateError ? (
-          <>
-            {inputError && (
-              <InlineAlert
-                variant="danger"
-                title="输入有误"
-                message={inputError}
-                className="mb-2 rounded-xl px-3 py-2 text-xs shadow-none"
-              />
-            )}
-            {!inputError && duplicateError && (
-              <InlineAlert
-                variant="warning"
-                title="任务已存在"
-                message={duplicateError}
-                className="mb-2 rounded-xl px-3 py-2 text-xs shadow-none"
-              />
-            )}
-          </>
-        ) : null}
-
-        {setupNeedsAction ? (
-          <div className="mb-2">
-            <InlineAlert
-              variant="warning"
-              title="基础配置未完成"
-              message={
-                setupMissingLabels
-                  ? `还缺少 ${setupMissingLabels}，完成后即可开始最小可用分析。`
-                  : '还缺少基础配置，完成后即可开始最小可用分析。'
-              }
-              action={
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => navigate('/settings')}
-                >
-                  去配置
-                </Button>
-              }
-              className="rounded-xl px-3 py-2 text-xs shadow-none"
-            />
-          </div>
-        ) : null}
-
-        {/* Market review notice */}
-        {marketReviewNotice && (
-          <div className="mb-2">
-            <InlineAlert
-              variant={marketReviewNotice.variant}
-              title={marketReviewNotice.title}
-              message={marketReviewNotice.message}
-              className="rounded-xl px-3 py-2 text-xs shadow-none"
-            />
-          </div>
+        {/* ── Alerts ──────────────────────────────────────────────────── */}
+        {inputError && (
+          <InlineAlert
+            variant="danger"
+            title="输入有误"
+            message={inputError}
+            className="mb-2 rounded-xl px-3 py-2 text-xs shadow-none"
+          />
         )}
-
+        {!inputError && duplicateError && (
+          <InlineAlert
+            variant="warning"
+            title="任务已存在"
+            message={duplicateError}
+            className="mb-2 rounded-xl px-3 py-2 text-xs shadow-none"
+          />
+        )}
+        {setupNeedsAction && (
+          <InlineAlert
+            variant="warning"
+            title="基础配置未完成"
+            message={
+              setupMissingLabels
+                ? `还缺少 ${setupMissingLabels}，完成后即可开始最小可用分析。`
+                : '还缺少基础配置，完成后即可开始最小可用分析。'
+            }
+            action={
+              <Button type="button" variant="secondary" size="sm" onClick={() => navigate('/settings')}>
+                去配置
+              </Button>
+            }
+            className="mb-2 rounded-xl px-3 py-2 text-xs shadow-none"
+          />
+        )}
+        {marketReviewNotice && (
+          <InlineAlert
+            variant={marketReviewNotice.variant}
+            title={marketReviewNotice.title}
+            message={marketReviewNotice.message}
+            className="mb-2 rounded-xl px-3 py-2 text-xs shadow-none"
+          />
+        )}
         {marketReviewError && (
-          <div className="mb-2">
-            <ApiErrorAlert error={marketReviewError} className="mb-1" onDismiss={() => setMarketReviewError(null)} />
-          </div>
+          <ApiErrorAlert
+            error={marketReviewError}
+            className="mb-2"
+            onDismiss={() => setMarketReviewError(null)}
+          />
         )}
 
         {/* Market review report */}
@@ -753,13 +872,14 @@ const MobileHomePage: React.FC = () => {
           <ApiErrorAlert error={error} className="mb-2" onDismiss={clearError} />
         )}
 
-        {/* Report content */}
+        {/* ── Report content ─────────────────────────────────────────── */}
         {isLoadingReport ? (
           <div className="flex h-32 flex-col items-center justify-center">
             <DashboardStateBlock title="加载报告中..." loading />
           </div>
         ) : selectedReport ? (
           <div className="space-y-3 pb-4">
+            {/* Action bar */}
             <div className="flex flex-wrap items-center justify-end gap-2">
               <button
                 type="button"
@@ -795,7 +915,9 @@ const MobileHomePage: React.FC = () => {
                 variant="home-action-ai"
                 size="sm"
                 disabled={isAnalyzing || selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
-                className={isHistoryTrendOpen ? 'border-primary/70 bg-primary/15 text-primary shadow-glow-cyan' : undefined}
+                className={
+                  isHistoryTrendOpen ? 'border-primary/70 bg-primary/15 text-primary shadow-glow-cyan' : undefined
+                }
                 onClick={() => {
                   if (isHistoryTrendOpen) {
                     closeHistoryTrend();
@@ -819,6 +941,8 @@ const MobileHomePage: React.FC = () => {
                 {reportText.fullReport}
               </Button>
             </div>
+
+            {/* Report body */}
             {isHistoryTrendOpen ? (
               <StockHistoryTrendDrawer
                 key={`stock-history-${selectedReport.meta.id}`}
@@ -846,47 +970,31 @@ const MobileHomePage: React.FC = () => {
               title="开始分析"
               description="输入股票代码进行分析，开始你的第一次分析吧。"
               className="max-w-sm border-dashed"
-              icon={(
+              icon={
                 <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                 </svg>
-              )}
+              }
             />
           </div>
         )}
-
       </div>
 
-      {/* History bottom sheet */}
-      {sidebarOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end" onClick={() => setSidebarOpen(false)}>
-          <div className="page-drawer-overlay absolute inset-0" />
-          <div
-            ref={bottomSheetScrollRef}
-            className="relative w-full max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-subtle bg-elevated shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-subtle bg-elevated px-4 py-3">
-              <span className="text-sm font-semibold text-foreground">历史记录</span>
-              <button
-                type="button"
-                onClick={() => setSidebarOpen(false)}
-                className="rounded-lg p-1 text-muted-text hover:bg-hover hover:text-foreground"
-                aria-label="关闭"
-              >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="p-4">
-              {sidebarContent}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {/* ── History bottom sheet ──────────────────────────────────────── */}
+      <HistoryBottomSheet
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        historyItems={historyItems}
+        isLoadingHistory={isLoadingHistory}
+        isLoadingMore={isLoadingMore}
+        hasMore={hasMore}
+        selectedReportId={selectedReport?.meta.id}
+        activeTasks={activeTasks}
+        onLoadMore={() => void loadMoreHistory()}
+        onItemClick={handleHistoryItemClick}
+      />
 
-      {/* Markdown drawer */}
+      {/* ── Markdown drawer ──────────────────────────────────────────── */}
       {markdownDrawerOpen && selectedReport?.meta.id && (
         <ReportMarkdownDrawer
           key={selectedReport.meta.id}
@@ -898,19 +1006,15 @@ const MobileHomePage: React.FC = () => {
         />
       )}
 
-      {/* Delete confirm */}
+      {/* ── Delete confirm (kept for future batch-delete) ────────────── */}
       <ConfirmDialog
         isOpen={showDeleteConfirm}
         title="删除历史记录"
-        message={
-          selectedHistoryIds.length === 1
-            ? '确认删除这条历史记录吗？删除后将不可恢复。'
-            : `确认删除选中的 ${selectedHistoryIds.length} 条历史记录吗？删除后将不可恢复。`
-        }
+        message="确认删除选中的历史记录吗？删除后将不可恢复。"
         confirmText={isDeletingHistory ? '删除中...' : '确认删除'}
         cancelText="取消"
-        isDanger={true}
-        onConfirm={handleDeleteSelectedHistory}
+        isDanger
+        onConfirm={() => setShowDeleteConfirm(false)}
         onCancel={() => setShowDeleteConfirm(false)}
       />
     </div>
