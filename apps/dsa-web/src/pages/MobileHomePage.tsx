@@ -1302,7 +1302,7 @@ const MobileHomePage: React.FC = () => {
       >
         {/* ── Input section ────────────────────────────────────────────── */}
         <div className="mb-3 space-y-2">
-          {/* Row 1: Input + Notify + History */}
+          {/* Row 1: Input + History */}
           <div className="flex items-center gap-2">
             <div className="min-w-0 flex-1">
               <StockAutocomplete
@@ -1316,16 +1316,6 @@ const MobileHomePage: React.FC = () => {
                 className={inputError ? 'border-danger/50' : undefined}
               />
             </div>
-            {/* Notify toggle */}
-            <label className="flex h-11 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-xl border border-subtle bg-surface px-2 text-xs text-secondary-text select-none active:bg-hover">
-              <input
-                type="checkbox"
-                checked={notify}
-                onChange={(e) => setNotify(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-border accent-primary"
-              />
-              推送
-            </label>
             {/* History button */}
             <button
               type="button"
@@ -1526,8 +1516,18 @@ const MobileHomePage: React.FC = () => {
           <div className="space-y-3 pb-4">
             {/* Action bar */}
             <div className="flex flex-col gap-2 pt-3 border-t border-border">
-              {/* Row 1: 重新分析 + 追问 AI */}
+              {/* Row 1: 推送 + 重新分析 + 追问 AI */}
               <div className="flex items-center justify-end gap-2">
+                {/* Notify toggle */}
+                <label className="flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-lg border border-subtle bg-surface px-2 text-xs text-secondary-text select-none active:bg-hover">
+                  <input
+                    type="checkbox"
+                    checked={notify}
+                    onChange={(e) => setNotify(e.target.checked)}
+                    className="h-3 w-3 rounded border-border accent-primary"
+                  />
+                  推送
+                </label>
                 <Button
                   variant="home-action-ai"
                   size="sm"
