@@ -1525,7 +1525,7 @@ const MobileHomePage: React.FC = () => {
         ) : selectedReport ? (
           <div className="space-y-3 pb-4">
             {/* Action bar */}
-            <div className="flex flex-col gap-2 pt-3 border-t border-subtle">
+            <div className="flex flex-col gap-2 pt-3 border-t border-border">
               {/* Row 1: 重新分析 + 追问 AI */}
               <div className="flex items-center justify-end gap-2">
                 <Button
