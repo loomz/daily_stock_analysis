@@ -1525,8 +1525,8 @@ const MobileHomePage: React.FC = () => {
         ) : selectedReport ? (
           <div className="space-y-3 pb-4">
             {/* Action bar */}
-            <div className="flex flex-col gap-3">
-              {/* Row 1: 重新分析 + 完整报告 */}
+            <div className="flex flex-col gap-2 pt-3 border-t border-subtle">
+              {/* Row 1: 重新分析 + 追问 AI */}
               <div className="flex items-center justify-end gap-2">
                 <Button
                   variant="home-action-ai"
@@ -1542,6 +1542,20 @@ const MobileHomePage: React.FC = () => {
                 <Button
                   variant="home-action-ai"
                   size="sm"
+                  disabled={selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
+                  onClick={handleAskFollowUp}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  追问 AI
+                </Button>
+              </div>
+              {/* Row 2: 完整报告 + 历史趋势 */}
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="home-action-ai"
+                  size="sm"
                   disabled={selectedReport.meta.id === undefined}
                   onClick={openMarkdownDrawer}
                 >
@@ -1550,9 +1564,6 @@ const MobileHomePage: React.FC = () => {
                   </svg>
                   完整报告
                 </Button>
-              </div>
-              {/* Row 2: 历史趋势 + 追问 AI */}
-              <div className="flex items-center justify-end gap-2">
                 <Button
                   variant="home-action-ai"
                   size="sm"
@@ -1570,17 +1581,6 @@ const MobileHomePage: React.FC = () => {
                 >
                   <BarChart3 className="h-4 w-4" />
                   历史趋势
-                </Button>
-                <Button
-                  variant="home-action-ai"
-                  size="sm"
-                  disabled={selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
-                  onClick={handleAskFollowUp}
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                  </svg>
-                  追问 AI
                 </Button>
               </div>
             </div>
