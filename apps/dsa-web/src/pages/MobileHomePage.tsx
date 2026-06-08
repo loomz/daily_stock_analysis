@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, BarChart3, Check, Clock, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, Check, Clock, Send, SlidersHorizontal, Sparkles, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { analysisApi } from '../api/analysis';
@@ -18,6 +18,9 @@ import type { SetupStatusResponse } from '../types/systemConfig';
 import { getSentimentColor } from '../types/analysis';
 import { formatDateTime } from '../utils/format';
 import { getReportText, normalizeReportLanguage } from '../utils/reportLanguage';
+import { generateUUID } from '../utils/uuid';
+import { resolveChatFollowUpContext, buildFollowUpPrompt } from '../utils/chatFollowUp';
+import type { ChatFollowUpContext } from '../utils/chatFollowUp';
 
 type MarketReviewNotice = {
   variant: 'success' | 'warning' | 'danger';
@@ -537,6 +540,326 @@ function MobileHistoryTrend({
   );
 }
 
+// ─── Mobile ask AI overlay ──────────────────────────────────────────────────
+
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+function MobileAskAIOverlay({
+  report,
+  onClose,
+}: {
+  report: AnalysisReport;
+  onClose: () => void;
+}) {
+  const stockCode = report.meta.stockCode;
+  const stockName = report.meta.stockName || null;
+  const recordId = report.meta.id;
+
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [progressText, setProgressText] = useState('');
+  const [sessionId] = useState(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('dsa_chat_session_id') : null;
+    return saved ?? generateUUID();
+  });
+  const [followUpContext, setFollowUpContext] = useState<ChatFollowUpContext | null>(null);
+  const [contextLoading, setContextLoading] = useState(false);
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef(true);
+
+  // Resolve follow-up context on mount
+  useEffect(() => {
+    isMountedRef.current = true;
+    const initPrompt = buildFollowUpPrompt(stockCode, stockName);
+    setInput(initPrompt);
+
+    setFollowUpContext({
+      stock_code: stockCode,
+      stock_name: stockName,
+    });
+
+    if (recordId) {
+      setContextLoading(true);
+      void resolveChatFollowUpContext({
+        stockCode,
+        stockName,
+        recordId,
+      }).then((ctx) => {
+        if (isMountedRef.current) {
+          setFollowUpContext(ctx);
+          setContextLoading(false);
+        }
+      }).catch(() => {
+        if (isMountedRef.current) {
+          setContextLoading(false);
+        }
+      });
+    }
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [stockCode, stockName, recordId]);
+
+  // Scroll to bottom on new messages / loading
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading, progressText]);
+
+  const handleSend = useCallback(async () => {
+    const msgText = input.trim();
+    if (!msgText || loading) return;
+
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    const userMsg: ChatMessage = { id: Date.now().toString(), role: 'user', content: msgText };
+    setMessages((prev) => [...prev, userMsg]);
+    setInput('');
+    setLoading(true);
+    setError(null);
+    setProgressText('正在连接...');
+
+    const currentContext = followUpContext;
+    setFollowUpContext(null);
+
+    try {
+      const payload = {
+        message: msgText,
+        session_id: sessionId,
+        ...(currentContext ? { context: currentContext } : {}),
+      };
+
+      const response = await agentApi.chatStream(payload, { signal: ac.signal });
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let finalContent: string | null = null;
+
+      const processLine = (line: string) => {
+        if (!line.startsWith('data: ')) return;
+        const event = JSON.parse(line.slice(6));
+        if (event.type === 'done') {
+          if (event.success === false) {
+            throw new Error(event.content || event.message || '大模型调用出错');
+          }
+          finalContent = event.content ?? '';
+          return;
+        }
+        if (event.type === 'error') {
+          throw new Error(event.content || event.message || '分析出错');
+        }
+        if (event.type === 'thinking') {
+          setProgressText(event.message || 'AI 正在思考...');
+        } else if (event.type === 'tool_start') {
+          setProgressText(`${event.display_name || event.tool}...`);
+        } else if (event.type === 'tool_done') {
+          setProgressText(`${event.display_name || event.tool} 完成`);
+        } else if (event.type === 'generating') {
+          setProgressText(event.message || '正在生成分析...');
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const line of lines) {
+          try {
+            processLine(line);
+          } catch (parseErr: unknown) {
+            if (parseErr instanceof Error && parseErr.name === 'AbortError') throw parseErr;
+          }
+        }
+      }
+      if (buf.trim().startsWith('data: ')) {
+        try {
+          processLine(buf.trim());
+        } catch (parseErr: unknown) {
+          if (parseErr instanceof Error && parseErr.name === 'AbortError') throw parseErr;
+        }
+      }
+
+      if (!ac.signal.aborted && isMountedRef.current) {
+        const assistantMsg: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: finalContent || '（无内容）',
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Silent on user abort
+      } else {
+        const msg = err instanceof Error ? err.message : '请求失败，请稍后重试';
+        setError(msg);
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setLoading(false);
+        setProgressText('');
+      }
+    }
+  }, [input, loading, sessionId, followUpContext]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      void handleSend();
+    }
+  };
+
+  // Save session ID to localStorage
+  useEffect(() => {
+    localStorage.setItem('dsa_chat_session_id', sessionId);
+  }, [sessionId]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-subtle bg-elevated px-3 py-2.5">
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex items-center gap-1 text-sm text-secondary-text"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          返回
+        </button>
+        <span className="text-sm font-semibold text-foreground">追问 AI</span>
+        <div className="w-12 text-right">
+          <span className="text-xs text-muted-text">{stockCode}</span>
+        </div>
+      </div>
+
+      {/* Messages area */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto touch-pan-y px-3 py-3 space-y-3" style={{ minHeight: 0 }}>
+        {messages.length === 0 && !loading ? (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center">
+              <Sparkles className="mx-auto h-8 w-8 text-primary/60 mb-2" />
+              <p className="text-sm text-muted-text">向 AI 追问关于 {stockName || stockCode} 的分析</p>
+              {contextLoading && (
+                <p className="mt-1 text-xs text-muted-text">正在加载上下文...</p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            {messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
+              >
+                {/* Avatar */}
+                <div
+                  className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                    msg.role === 'user'
+                      ? 'bg-primary text-white'
+                      : 'bg-primary/15 text-primary'
+                  }`}
+                >
+                  {msg.role === 'user' ? 'U' : 'AI'}
+                </div>
+
+                {/* Message content */}
+                <div
+                  className={`max-w-[80%] min-w-0 rounded-2xl px-3 py-2 text-sm ${
+                    msg.role === 'user'
+                      ? 'bg-primary text-primary-foreground rounded-tr-sm'
+                      : 'bg-surface text-foreground rounded-tl-sm'
+                  }`}
+                >
+                  {msg.role === 'assistant' ? (
+                    <div className="prose prose-sm prose-invert max-w-none whitespace-pre-wrap break-words">
+                      {msg.content}
+                    </div>
+                  ) : (
+                    msg.content.split('\n').map((line, i) => (
+                      <p key={i} className="mb-0.5 last:mb-0">
+                        {line || ' '}
+                      </p>
+                    ))
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {/* Loading indicator */}
+            {loading && (
+              <div className="flex gap-2">
+                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary text-[10px] font-bold">
+                  AI
+                </div>
+                <div className="rounded-2xl rounded-tl-sm bg-surface px-3 py-2">
+                  <div className="flex items-center gap-2 text-xs text-muted-text">
+                    <div className="relative h-3 w-3 flex-shrink-0">
+                      <div className="absolute inset-0 rounded-full border-2 border-primary/20" />
+                      <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                    </div>
+                    <span>{progressText || '正在思考...'}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Error */}
+            {error && (
+              <div className="rounded-xl border border-danger/30 bg-danger/5 px-3 py-2 text-xs text-danger">
+                {error}
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </>
+        )}
+      </div>
+
+      {/* Input area */}
+      <div className="border-t border-subtle bg-elevated px-3 py-2">
+        <div className="flex items-end gap-2">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="输入你的问题... (Enter 发送)"
+            disabled={loading}
+            rows={1}
+            className="flex-1 min-h-[36px] max-h-[120px] rounded-xl border border-subtle bg-surface px-3 py-2 text-sm resize-none focus:outline-none focus:border-primary/50 disabled:opacity-60"
+            style={{ height: 'auto' }}
+            onInput={(e) => {
+              const t = e.target as HTMLTextAreaElement;
+              t.style.height = 'auto';
+              t.style.height = `${Math.min(t.scrollHeight, 120)}px`;
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => void handleSend()}
+            disabled={!input.trim() || loading}
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground disabled:opacity-40 active:scale-95 transition-transform"
+          >
+            <Send className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ──────────────────────────────────────────────────────────────
 
 const MobileHomePage: React.FC = () => {
@@ -551,6 +874,7 @@ const MobileHomePage: React.FC = () => {
   const [analysisSkills, setAnalysisSkills] = useState<SkillInfo[]>([]);
   const [selectedStrategyId, setSelectedStrategyId] = useState('');
   const [strategyMenuOpen, setStrategyMenuOpen] = useState(false);
+  const [askAiOpen, setAskAiOpen] = useState(false);
 
   const marketReviewPollTimer = useRef<number | null>(null);
   const dashboardScrollRef = useRef<HTMLDivElement | null>(null);
@@ -811,11 +1135,8 @@ const MobileHomePage: React.FC = () => {
 
   const handleAskFollowUp = useCallback(() => {
     if (selectedReport?.meta.id === undefined || isMarketReviewHistoryReport) return;
-    const code = selectedReport.meta.stockCode;
-    const name = selectedReport.meta.stockName;
-    const rid = selectedReport.meta.id;
-    navigate(`/chat?stock=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}&recordId=${rid}`);
-  }, [navigate, selectedReport, isMarketReviewHistoryReport]);
+    setAskAiOpen(true);
+  }, [selectedReport, isMarketReviewHistoryReport]);
 
   const handleReanalyze = useCallback(() => {
     if (!selectedReport || isMarketReviewHistoryReport) return;
@@ -996,19 +1317,30 @@ const MobileHomePage: React.FC = () => {
                 className={inputError ? 'border-danger/50' : undefined}
               />
             </div>
+            {/* Notify toggle */}
+            <label className="flex h-11 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-xl border border-subtle bg-surface px-2 text-xs text-secondary-text select-none active:bg-hover">
+              <input
+                type="checkbox"
+                checked={notify}
+                onChange={(e) => setNotify(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border accent-primary"
+              />
+              推送
+            </label>
+          </div>
+
+          {/* Row 2: History + Strategy + Actions */}
+          <div className="flex items-center gap-2">
             {/* History button */}
             <button
               type="button"
               onClick={() => setSidebarOpen(true)}
-              className="flex h-11 w-9 shrink-0 items-center justify-center rounded-lg border border-subtle bg-surface text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-subtle bg-surface text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
               aria-label="历史记录"
             >
               <Clock className="h-4 w-4" />
             </button>
-          </div>
 
-          {/* Row 2: Strategy icon + Notify */}
-          <div className="flex items-center gap-2">
             {analysisSkills.length > 0 ? (
               <div ref={strategyMenuRef} className="relative">
                 <button
@@ -1064,18 +1396,7 @@ const MobileHomePage: React.FC = () => {
               <div className="w-9" />
             )}
 
-            {/* Notify toggle */}
-            <label className="flex h-9 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-xl border border-subtle bg-surface px-2 text-xs text-secondary-text select-none active:bg-hover">
-              <input
-                type="checkbox"
-                checked={notify}
-                onChange={(e) => setNotify(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-border accent-primary"
-              />
-              推送
-            </label>
-
-            {/* Row 3 inline: Market review + Analyze */}
+            {/* Market review + Analyze */}
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <Button
                 type="button"
@@ -1311,6 +1632,14 @@ const MobileHomePage: React.FC = () => {
           stockCode={selectedReport.meta.stockCode}
           reportLanguage={reportLanguage}
           onClose={closeMarkdownDrawer}
+        />
+      )}
+
+      {/* ── Ask AI overlay ───────────────────────────────────────────── */}
+      {askAiOpen && selectedReport && (
+        <MobileAskAIOverlay
+          report={selectedReport}
+          onClose={() => setAskAiOpen(false)}
         />
       )}
 
