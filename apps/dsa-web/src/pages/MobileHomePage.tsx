@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, BarChart3, Check, Clock, SlidersHorizontal, X, Zap } from 'lucide-react';
+import { ArrowLeft, BarChart3, Check, Clock, SlidersHorizontal, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { analysisApi } from '../api/analysis';
@@ -991,23 +991,23 @@ const MobileHomePage: React.FC = () => {
                 onSubmit={(stockCode, stockName, selectionSource) => {
                   handleSubmitAnalysis(stockCode, stockName, selectionSource);
                 }}
-                placeholder="股票代码/名称"
+                placeholder="输入股票代码/名称"
                 disabled={isAnalyzing}
                 className={inputError ? 'border-danger/50' : undefined}
               />
             </div>
-            <label className="flex h-11 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-xl border border-subtle bg-surface px-2 text-xs text-secondary-text select-none active:bg-hover">
-              <input
-                type="checkbox"
-                checked={notify}
-                onChange={(e) => setNotify(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-border accent-primary"
-              />
-              推送
-            </label>
+            {/* History button */}
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="flex h-11 w-9 shrink-0 items-center justify-center rounded-lg border border-subtle bg-surface text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
+              aria-label="历史记录"
+            >
+              <Clock className="h-4 w-4" />
+            </button>
           </div>
 
-          {/* Row 2: Strategy icon + History icon */}
+          {/* Row 2: Strategy icon + Notify */}
           <div className="flex items-center gap-2">
             {analysisSkills.length > 0 ? (
               <div ref={strategyMenuRef} className="relative">
@@ -1064,15 +1064,16 @@ const MobileHomePage: React.FC = () => {
               <div className="w-9" />
             )}
 
-            {/* History button */}
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(true)}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-subtle bg-surface text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
-              aria-label="历史记录"
-            >
-              <Clock className="h-4 w-4" />
-            </button>
+            {/* Notify toggle */}
+            <label className="flex h-9 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-xl border border-subtle bg-surface px-2 text-xs text-secondary-text select-none active:bg-hover">
+              <input
+                type="checkbox"
+                checked={notify}
+                onChange={(e) => setNotify(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border accent-primary"
+              />
+              推送
+            </label>
 
             {/* Row 3 inline: Market review + Analyze */}
             <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -1103,10 +1104,7 @@ const MobileHomePage: React.FC = () => {
                     分析中
                   </>
                 ) : (
-                  <>
-                    <Zap className="h-3.5 w-3.5" />
-                    开始分析
-                  </>
+                  '分析'
                 )}
               </button>
             </div>
