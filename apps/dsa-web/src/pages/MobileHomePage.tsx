@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Check, Clock, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, Check, Clock, SlidersHorizontal, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { analysisApi } from '../api/analysis';
@@ -9,12 +9,11 @@ import { systemConfigApi } from '../api/systemConfig';
 import { ApiErrorAlert, Button, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
 import { DashboardStateBlock } from '../components/dashboard';
 import { StockAutocomplete } from '../components/StockAutocomplete';
-import { StockHistoryTrendDrawer } from '../components/history';
 import { ReportMarkdownDrawer } from '../components/report/ReportMarkdownDrawer';
 import { ReportSummary } from '../components/report';
 import { TaskPanel } from '../components/tasks';
 import { useDashboardLifecycle, useHomeDashboardState } from '../hooks';
-import type { HistoryItem, TaskInfo } from '../types/analysis';
+import type { AnalysisReport, HistoryItem, StockHistoryRange, TaskInfo } from '../types/analysis';
 import type { SetupStatusResponse } from '../types/systemConfig';
 import { getSentimentColor } from '../types/analysis';
 import { formatDateTime } from '../utils/format';
@@ -225,6 +224,314 @@ function HistoryBottomSheet({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Helper functions for history trend ──────────────────────────────────────
+
+const formatNum = (v?: number, d = 2): string =>
+  typeof v === 'number' && Number.isFinite(v) ? v.toFixed(d) : '--';
+
+const formatChangePct = (v?: number): string => {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return '--';
+  return `${v > 0 ? '+' : ''}${v.toFixed(2)}%`;
+};
+
+const formatShortTime = (v?: string | null): string => {
+  const f = formatDateTime(v);
+  return f.length > 11 ? f.slice(5) : f;
+};
+
+const formatModelName = (v?: string): string => {
+  const m = v?.trim();
+  if (!m) return '未记录';
+  const parts = m.split('/').filter(Boolean);
+  return parts[parts.length - 1] || m;
+};
+
+const getAdviceShort = (item: Pick<HistoryItem, 'operationAdvice' | 'trendPrediction'>): string => {
+  const n = item.operationAdvice?.trim() || item.trendPrediction?.trim();
+  if (!n) return '--';
+  if (n.includes('减仓')) return '减仓';
+  if (n.includes('卖')) return '卖出';
+  if (n.includes('观望') || n.includes('等待')) return '观望';
+  if (n.includes('买') || n.includes('布局')) return '买入';
+  return n.split(/[，。；、\s]/)[0] || '--';
+};
+
+const getAdviceColor = (v: string): 'up' | 'down' | 'flat' => {
+  if (v.includes('买') || v.includes('多') || v.includes('持有')) return 'up';
+  if (v.includes('卖') || v.includes('减') || v.includes('空')) return 'down';
+  return 'flat';
+};
+
+const adviceColorMap = {
+  up: 'var(--home-price-up)',
+  down: 'var(--home-price-down)',
+  flat: 'var(--text-secondary)',
+};
+
+// ─── Mobile history trend full-screen overlay ────────────────────────────────
+
+const RANGE_OPTIONS: Array<{ value: StockHistoryRange; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: '30d', label: '近30天' },
+  { value: '90d', label: '近90天' },
+];
+
+function MobileHistoryTrend({
+  report,
+  items,
+  total,
+  hasMore,
+  isLoading,
+  isLoadingMore,
+  error,
+  filters,
+  onClose,
+  onRangeChange,
+  onLoadMore,
+  onSelectRecord,
+  onRetry,
+}: {
+  report: AnalysisReport;
+  items: HistoryItem[];
+  total: number;
+  hasMore: boolean;
+  isLoading: boolean;
+  isLoadingMore: boolean;
+  error?: unknown;
+  filters: { range: StockHistoryRange };
+  onClose: () => void;
+  onRangeChange: (range: StockHistoryRange) => void;
+  onLoadMore: () => void;
+  onSelectRecord: (id: number) => void;
+  onRetry: () => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Load more on scroll
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const handler = () => {
+      const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (dist < 300 && hasMore && !isLoadingMore && !isLoading) {
+        onLoadMore();
+      }
+    };
+    el.addEventListener('scroll', handler, { passive: true });
+    return () => el.removeEventListener('scroll', handler);
+  }, [hasMore, isLoadingMore, isLoading, onLoadMore]);
+
+  // Summary stats
+  const summary = useMemo(() => {
+    const scores = items
+      .map((i) => i.sentimentScore)
+      .filter((s): s is number => typeof s === 'number' && Number.isFinite(s));
+    const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : undefined;
+    const current = items[0];
+    return {
+      total: total || items.length,
+      avgScore: avg,
+      currentAdvice: current ? getAdviceShort(current) : '--',
+      currentScore: current?.sentimentScore,
+      currentModel: formatModelName(current?.modelUsed || report.meta.modelUsed),
+      latestTime: formatDateTime(items[0]?.createdAt || report.meta.createdAt),
+    };
+  }, [items, total, report]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-subtle bg-elevated px-3 py-2.5">
+        <button type="button" onClick={onClose} className="flex items-center gap-1 text-sm text-secondary-text">
+          <ArrowLeft className="h-4 w-4" />
+          返回
+        </button>
+        <span className="text-sm font-semibold text-foreground">历史趋势</span>
+        <div className="w-12 text-right">
+          <span className="text-xs text-muted-text">{report.meta.stockCode}</span>
+        </div>
+      </div>
+
+      {/* Range selector */}
+      <div className="flex items-center gap-2 border-b border-subtle bg-elevated px-3 py-2">
+        {RANGE_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onRangeChange(opt.value)}
+            className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
+              filters.range === opt.value
+                ? 'bg-primary/10 text-primary ring-1 ring-primary/30'
+                : 'text-muted-text hover:bg-hover'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto touch-pan-y" style={{ minHeight: 0 }}>
+        {isLoading ? (
+          <div className="flex h-32 items-center justify-center">
+            <DashboardStateBlock loading title="加载历史趋势中..." compact />
+          </div>
+        ) : error ? (
+          <div className="flex h-32 items-center justify-center">
+            <DashboardStateBlock
+              title="加载失败"
+              description="请稍后重试"
+              compact
+              action={
+                <button type="button" onClick={() => void onRetry()} className="text-xs text-primary underline">
+                  重试
+                </button>
+              }
+            />
+          </div>
+        ) : items.length === 0 ? (
+          <div className="flex h-32 items-center justify-center">
+            <DashboardStateBlock title="暂无历史数据" description="完成多次分析后这里会展示趋势" compact />
+          </div>
+        ) : (
+          <>
+            {/* Summary cards */}
+            <div className="grid grid-cols-4 gap-2 px-3 pt-3 pb-2">
+              <div className="rounded-xl bg-surface px-2 py-2 text-center">
+                <p className="text-[10px] text-muted-text">分析次数</p>
+                <p className="text-sm font-bold text-foreground">{summary.total}</p>
+              </div>
+              <div className="rounded-xl bg-surface px-2 py-2 text-center">
+                <p className="text-[10px] text-muted-text">当前观点</p>
+                <p className="text-sm font-bold" style={{ color: adviceColorMap[getAdviceColor(summary.currentAdvice)] }}>
+                  {summary.currentAdvice}
+                </p>
+              </div>
+              <div className="rounded-xl bg-surface px-2 py-2 text-center">
+                <p className="text-[10px] text-muted-text">当前分数</p>
+                <p
+                  className="text-sm font-bold"
+                  style={{
+                    color: summary.currentScore ? getSentimentColor(summary.currentScore) : 'inherit',
+                  }}
+                >
+                  {formatNum(summary.currentScore, 0)}
+                </p>
+              </div>
+              <div className="rounded-xl bg-surface px-2 py-2 text-center">
+                <p className="text-[10px] text-muted-text">平均分</p>
+                <p className="text-sm font-bold text-foreground">{formatNum(summary.avgScore, 1)}</p>
+              </div>
+            </div>
+
+            {/* History list */}
+            <div className="space-y-2 px-3 py-2">
+              {items.map((item) => {
+                const advice = getAdviceShort(item);
+                const adviceColor = getAdviceColor(advice);
+                const sentimentColor =
+                  item.sentimentScore !== undefined ? getSentimentColor(item.sentimentScore) : null;
+                const changeColor =
+                  typeof item.changePct === 'number' && Number.isFinite(item.changePct)
+                    ? item.changePct > 0
+                      ? 'var(--home-price-up)'
+                      : item.changePct < 0
+                        ? 'var(--home-price-down)'
+                        : undefined
+                    : undefined;
+
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border border-subtle bg-surface p-3"
+                  >
+                    {/* Top row: time, score, advice */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-mono text-muted-text">
+                        {formatShortTime(item.createdAt)}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="rounded-md px-1.5 py-0.5 text-[11px] font-semibold"
+                          style={{
+                            color: adviceColorMap[adviceColor],
+                            backgroundColor: `${adviceColorMap[adviceColor]}15`,
+                          }}
+                        >
+                          {advice}
+                        </span>
+                        {sentimentColor && (
+                          <span
+                            className="font-mono text-sm font-bold"
+                            style={{ color: sentimentColor }}
+                          >
+                            {formatNum(item.sentimentScore, 0)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Middle row: price, change, volume */}
+                    <div className="mt-2 flex items-center gap-3">
+                      <span className="font-mono text-xs text-secondary-text">
+                        ¥{formatNum(item.currentPrice)}
+                      </span>
+                      <span className="font-mono text-xs font-semibold" style={changeColor ? { color: changeColor } : undefined}>
+                        {formatChangePct(item.changePct)}
+                      </span>
+                      <span className="font-mono text-[11px] text-muted-text">
+                        量比 {formatNum(item.volumeRatio, 1)}
+                      </span>
+                      <span className="font-mono text-[11px] text-muted-text">
+                        换手 {formatNum(item.turnoverRate, 1)}%
+                      </span>
+                    </div>
+
+                    {/* Bottom row: model + action */}
+                    <div className="mt-2 flex items-center justify-between">
+                      <span className="text-[11px] text-muted-text">
+                        {formatModelName(item.modelUsed)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectRecord(item.id);
+                          onClose();
+                        }}
+                        className="rounded-lg bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary"
+                      >
+                        查看报告
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Loading more */}
+              {isLoadingMore && (
+                <div className="flex justify-center py-4">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-subtle border-t-primary" />
+                </div>
+              )}
+
+              {/* End marker */}
+              {!hasMore && (
+                <div className="py-4 text-center">
+                  <div className="mx-auto h-px w-16 bg-subtle" />
+                  <p className="mt-2 text-[10px] text-muted-text uppercase tracking-widest">
+                    已加载全部 {summary.total} 条
+                  </p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -944,7 +1251,7 @@ const MobileHomePage: React.FC = () => {
 
             {/* Report body */}
             {isHistoryTrendOpen ? (
-              <StockHistoryTrendDrawer
+              <MobileHistoryTrend
                 key={`stock-history-${selectedReport.meta.id}`}
                 report={selectedReport}
                 items={stockHistoryItems}
