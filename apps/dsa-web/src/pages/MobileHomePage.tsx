@@ -17,7 +17,7 @@ import type { AnalysisReport, HistoryItem, StockHistoryRange, TaskInfo } from '.
 import type { SetupStatusResponse } from '../types/systemConfig';
 import { getSentimentColor } from '../types/analysis';
 import { formatDateTime } from '../utils/format';
-import { getReportText, normalizeReportLanguage } from '../utils/reportLanguage';
+import { normalizeReportLanguage } from '../utils/reportLanguage';
 import { generateUUID } from '../utils/uuid';
 import { resolveChatFollowUpContext, buildFollowUpPrompt } from '../utils/chatFollowUp';
 import type { ChatFollowUpContext } from '../utils/chatFollowUp';
@@ -995,7 +995,6 @@ const MobileHomePage: React.FC = () => {
   }, [analysisSkills, selectedStrategyId]);
 
   const reportLanguage = normalizeReportLanguage(selectedReport?.meta.reportLanguage);
-  const reportText = getReportText(reportLanguage);
   const isMarketReviewHistoryReport = selectedReport?.meta.reportType === 'market_review';
   const isHistoryTrendUnavailable = !selectedReport || isMarketReviewHistoryReport || !selectedReport.meta.stockCode;
 
@@ -1303,7 +1302,7 @@ const MobileHomePage: React.FC = () => {
       >
         {/* ── Input section ────────────────────────────────────────────── */}
         <div className="mb-3 space-y-2">
-          {/* Row 1: Input + Notify */}
+          {/* Row 1: Input + Notify + History */}
           <div className="flex items-center gap-2">
             <div className="min-w-0 flex-1">
               <StockAutocomplete
@@ -1327,6 +1326,15 @@ const MobileHomePage: React.FC = () => {
               />
               推送
             </label>
+            {/* History button */}
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-subtle bg-surface text-secondary-text transition-colors hover:bg-hover hover:text-foreground active:bg-hover"
+              aria-label="历史记录"
+            >
+              <Clock className="h-5 w-5" />
+            </button>
           </div>
 
           {/* Row 2: History + Strategy + Actions */}
@@ -1517,58 +1525,65 @@ const MobileHomePage: React.FC = () => {
         ) : selectedReport ? (
           <div className="space-y-3 pb-4">
             {/* Action bar */}
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button
-                variant="home-action-ai"
-                size="sm"
-                disabled={isAnalyzing || selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
-                onClick={handleReanalyze}
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                {reportText.reanalyze}
-              </Button>
-              <Button
-                variant="home-action-ai"
-                size="sm"
-                disabled={selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
-                onClick={handleAskFollowUp}
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
-                追问 AI
-              </Button>
-              <Button
-                variant="home-action-ai"
-                size="sm"
-                disabled={isAnalyzing || selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
-                className={
-                  isHistoryTrendOpen ? 'border-primary/70 bg-primary/15 text-primary shadow-glow-cyan' : undefined
-                }
-                onClick={() => {
-                  if (isHistoryTrendOpen) {
-                    closeHistoryTrend();
-                    return;
+            <div className="flex flex-col gap-2">
+              {/* Row 1: three small buttons */}
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="home-action-ai"
+                  size="sm"
+                  disabled={isAnalyzing || selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
+                  onClick={handleReanalyze}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  重分析
+                </Button>
+                <Button
+                  variant="home-action-ai"
+                  size="sm"
+                  disabled={isAnalyzing || selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
+                  className={
+                    isHistoryTrendOpen ? 'border-primary/70 bg-primary/15 text-primary shadow-glow-cyan' : undefined
                   }
-                  void openHistoryTrend();
-                }}
-              >
-                <BarChart3 className="h-4 w-4" />
-                历史趋势
-              </Button>
-              <Button
-                variant="home-action-ai"
-                size="sm"
-                disabled={selectedReport.meta.id === undefined}
-                onClick={openMarkdownDrawer}
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                {reportText.fullReport}
-              </Button>
+                  onClick={() => {
+                    if (isHistoryTrendOpen) {
+                      closeHistoryTrend();
+                      return;
+                    }
+                    void openHistoryTrend();
+                  }}
+                >
+                  <BarChart3 className="h-4 w-4" />
+                  趋势
+                </Button>
+                <Button
+                  variant="home-action-ai"
+                  size="sm"
+                  disabled={selectedReport.meta.id === undefined}
+                  onClick={openMarkdownDrawer}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  完整报告
+                </Button>
+              </div>
+              {/* Row 2: 追问 AI (larger) */}
+              <div className="pt-1">
+                <Button
+                  variant="home-action-ai"
+                  size="md"
+                  disabled={selectedReport.meta.id === undefined || isMarketReviewHistoryReport}
+                  onClick={handleAskFollowUp}
+                  className="w-full justify-center h-10 text-sm"
+                >
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  追问 AI
+                </Button>
+              </div>
             </div>
 
             {/* Report body */}
