@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, BarChart3, Check, Clock, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, Check, Clock, SlidersHorizontal, X, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { analysisApi } from '../api/analysis';
@@ -974,11 +974,6 @@ const MobileHomePage: React.FC = () => {
 
   return (
     <div className="flex h-screen w-full flex-col bg-background">
-      {/* ── Top bar ─────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between border-b border-subtle bg-elevated px-3 py-2.5">
-        <h1 className="text-base font-bold text-foreground">每日个股分析</h1>
-      </div>
-
       {/* ── Scrollable main content ─────────────────────────────────────── */}
       <div
         ref={dashboardScrollRef}
@@ -986,22 +981,36 @@ const MobileHomePage: React.FC = () => {
         style={{ minHeight: 0 }}
       >
         {/* ── Input section ────────────────────────────────────────────── */}
-        <div className="mb-3 space-y-2.5">
-          <StockAutocomplete
-            value={query}
-            onChange={setQuery}
-            onSubmit={(stockCode, stockName, selectionSource) => {
-              handleSubmitAnalysis(stockCode, stockName, selectionSource);
-            }}
-            placeholder="输入股票代码或名称，如 600519、贵州茅台、AAPL"
-            disabled={isAnalyzing}
-            className={inputError ? 'border-danger/50' : undefined}
-          />
+        <div className="mb-3 space-y-2">
+          {/* Row 1: Input + Notify */}
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <StockAutocomplete
+                value={query}
+                onChange={setQuery}
+                onSubmit={(stockCode, stockName, selectionSource) => {
+                  handleSubmitAnalysis(stockCode, stockName, selectionSource);
+                }}
+                placeholder="股票代码/名称"
+                disabled={isAnalyzing}
+                className={inputError ? 'border-danger/50' : undefined}
+              />
+            </div>
+            <label className="flex h-11 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-xl border border-subtle bg-surface px-2 text-xs text-secondary-text select-none active:bg-hover">
+              <input
+                type="checkbox"
+                checked={notify}
+                onChange={(e) => setNotify(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border accent-primary"
+              />
+              推送
+            </label>
+          </div>
 
-          {/* Strategy + notify row */}
+          {/* Row 2: Strategy icon + History icon */}
           <div className="flex items-center gap-2">
             {analysisSkills.length > 0 ? (
-              <div ref={strategyMenuRef} className="relative flex-1">
+              <div ref={strategyMenuRef} className="relative">
                 <button
                   ref={strategyButtonRef}
                   id="mobile-strategy-menu-button"
@@ -1011,10 +1020,10 @@ const MobileHomePage: React.FC = () => {
                   onClick={() => setStrategyMenuOpen((o) => !o)}
                   onKeyDown={handleStrategyButtonKeyDown}
                   disabled={isAnalyzing}
-                  className="flex h-11 w-full items-center gap-1.5 rounded-xl border border-subtle bg-surface px-3 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-subtle bg-surface text-secondary-text disabled:cursor-not-allowed disabled:opacity-60"
+                  title={selectedStrategy?.name || '策略'}
                 >
-                  <SlidersHorizontal className="h-4 w-4 flex-shrink-0" />
-                  <span className="truncate">{selectedStrategy?.name || '策略'}</span>
+                  <SlidersHorizontal className="h-4 w-4" />
                 </button>
                 {strategyMenuOpen ? (
                   <div
@@ -1022,7 +1031,7 @@ const MobileHomePage: React.FC = () => {
                     role="menu"
                     aria-labelledby="mobile-strategy-menu-button"
                     onKeyDown={handleStrategyMenuKeyDown}
-                    className="absolute left-0 right-0 top-full z-[120] mt-1 max-h-72 overflow-y-auto rounded-xl border border-subtle bg-elevated p-1 shadow-2xl"
+                    className="absolute left-0 top-full z-[120] mt-1 w-64 max-h-72 overflow-y-auto rounded-xl border border-subtle bg-elevated p-1 shadow-2xl"
                   >
                     {strategyOptions.map((option, index) => (
                       <button
@@ -1041,7 +1050,7 @@ const MobileHomePage: React.FC = () => {
                           }`}
                         />
                         <span className="min-w-0">
-                          <span className="block font-medium">{option.name}</span>
+                          <span className="block font-medium text-sm">{option.name}</span>
                           <span className="mt-0.5 line-clamp-2 block text-xs leading-5 text-muted-text">
                             {option.description}
                           </span>
@@ -1052,53 +1061,55 @@ const MobileHomePage: React.FC = () => {
                 ) : null}
               </div>
             ) : (
-              <div className="flex-1" />
+              <div className="w-9" />
             )}
 
-            {/* Notify toggle */}
-            <label className="flex h-11 min-w-[3.5rem] cursor-pointer items-center justify-center gap-1 rounded-xl border border-subtle bg-surface px-2 text-xs text-secondary-text select-none active:bg-hover">
-              <input
-                type="checkbox"
-                checked={notify}
-                onChange={(e) => setNotify(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-border accent-primary"
-              />
-              推送
-            </label>
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              size="md"
-              isLoading={isSubmittingMarketReview}
-              loadingText="提交中"
-              onClick={() => void handleTriggerMarketReview()}
-              className="flex h-11 flex-1 items-center justify-center gap-1.5 whitespace-nowrap"
-            >
-              <BarChart3 className="h-4 w-4" />
-              大盘复盘
-            </Button>
+            {/* History button */}
             <button
               type="button"
-              onClick={() => handleSubmitAnalysis()}
-              disabled={!query || isAnalyzing}
-              className="btn-primary flex h-11 flex-1 items-center justify-center gap-1.5 whitespace-nowrap text-sm"
+              onClick={() => setSidebarOpen(true)}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-subtle bg-surface text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
+              aria-label="历史记录"
             >
-              {isAnalyzing ? (
-                <>
-                  <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  分析中
-                </>
-              ) : (
-                '分析'
-              )}
+              <Clock className="h-4 w-4" />
             </button>
+
+            {/* Row 3 inline: Market review + Analyze */}
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                isLoading={isSubmittingMarketReview}
+                loadingText="提交中"
+                onClick={() => void handleTriggerMarketReview()}
+                className="flex h-9 flex-1 items-center justify-center gap-1 whitespace-nowrap text-xs"
+              >
+                <BarChart3 className="h-3.5 w-3.5" />
+                大盘复盘
+              </Button>
+              <button
+                type="button"
+                onClick={() => handleSubmitAnalysis()}
+                disabled={!query || isAnalyzing}
+                className="btn-primary flex h-9 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-lg text-xs disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isAnalyzing ? (
+                  <>
+                    <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    分析中
+                  </>
+                ) : (
+                  <>
+                    <Zap className="h-3.5 w-3.5" />
+                    开始分析
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1188,14 +1199,6 @@ const MobileHomePage: React.FC = () => {
           <div className="space-y-3 pb-4">
             {/* Action bar */}
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setSidebarOpen(true)}
-                className="rounded-lg p-2 text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
-                aria-label="历史记录"
-              >
-                <Clock className="h-5 w-5" />
-              </button>
               <Button
                 variant="home-action-ai"
                 size="sm"
